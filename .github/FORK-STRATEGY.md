@@ -218,6 +218,13 @@ when all gates below pass and a human approves the promotion. Promotion is
 7. Full sync simulation in a scratch worktree: revert patched files →
    merge upstream → `apply_patches.sh` re-applies (what a real sync run
    does)
+8. **Documentation gate** — every promoted feature ships with:
+   - A `CHANGELOG.md` entry (new file + feature, with the patch file name)
+   - Updated user-facing docs (README) if the feature changes behavior,
+     config keys, or the CLI surface
+   - A config reference if the feature adds config options
+     (`resources/default-config.toml` is the source of truth; docs/cli.md
+     for CLI commands)
 
 ### Process
 
