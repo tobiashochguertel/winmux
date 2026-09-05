@@ -40,6 +40,20 @@ all `.patch` files in `.github/patches/` in alphabetical order.
 
 There are no patches yet — this fork currently tracks upstream cleanly.
 
+Current patches:
+
+| Patch | Patch file | Files | Branch |
+|-------|-----------|-------|--------|
+| CLI automation + sidebar layering (PR #24) | `001-cli-automation-and-sidebar-layer.patch` | 57 modified files (see `PATCHED_FILES`) | `main` + `dev.patch` |
+| Fork identity + TCC reset (own bundle ID, Sparkle off) | `002-fork-identity-and-tcc-reset.patch` | `appMetadata.swift`, `startAtLogin.swift`, `showDiagnosticMessage.swift`, `project.yml`, `makefile`, `README.md` | `dev.patch` |
+
+> **Overlapping patches:** `002` touches `makefile` and `README.md`, which
+> `001` also modifies. Patches are applied in order (001 → 002), so the sync
+> flow works, but the "already applied" idempotency check only reliably
+> detects the **last** patch in an overlap chain. To verify a merged tree,
+> run the full cycle (revert patched files → apply all patches) instead of
+> relying on `apply_patches.sh` reporting "already applied" for every patch.
+
 ## How the sync works
 
 The `sync-upstream-and-fix.yml` workflow runs daily at 07:00 UTC (or manually).

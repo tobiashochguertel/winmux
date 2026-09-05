@@ -27,8 +27,11 @@ for patch in "$PATCH_DIR"/*.patch; do
     if git apply --check "$patch" 2>/dev/null; then
         git apply "$patch"
         echo "✅ applied $name"
+    elif git apply --reverse --check "$patch" 2>/dev/null; then
+        echo "✅ $name already applied (reverse check)"
     else
         echo "::error::$name does not apply cleanly — upstream may have changed the surrounding code"
+        echo "::error::If the patch was previously applied, a LATER patch may overlap it (see FORK-STRATEGY.md). Run the full revert -> apply cycle instead."
         exit 1
     fi
 done
