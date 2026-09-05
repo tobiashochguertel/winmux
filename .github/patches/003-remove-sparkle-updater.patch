@@ -1,0 +1,49 @@
+diff --git a/Sources/SparkleSupport/AutomaticUpdates.swift b/Sources/SparkleSupport/AutomaticUpdates.swift
+index 1df4cd10..6125903a 100644
+--- a/Sources/SparkleSupport/AutomaticUpdates.swift
++++ b/Sources/SparkleSupport/AutomaticUpdates.swift
+@@ -1,6 +1,10 @@
+ import Sparkle
+ 
+ /// Coordinates application updates from the release appcast.
++///
++/// Fork builds never start this updater (see `WinMuxApp.init`): the fork
++/// publishes no appcast and must not reach the upstream feed. The type stays
++/// for upstream-merge friendliness.
+ @MainActor
+ public enum AutomaticUpdates {
+     private static let updaterController = SPUStandardUpdaterController(
+diff --git a/Sources/WinMuxApp/WinMuxApp.swift b/Sources/WinMuxApp/WinMuxApp.swift
+index 6f23393a..6634d4f8 100644
+--- a/Sources/WinMuxApp/WinMuxApp.swift
++++ b/Sources/WinMuxApp/WinMuxApp.swift
+@@ -1,5 +1,4 @@
+ import AppBundle
+-import SparkleSupport
+ import SwiftUI
+ 
+ // This file is shared between SPM and xcode project
+@@ -12,21 +11,13 @@ struct WinMuxApp: App {
+     @Environment(\.openWindow) var openWindow: OpenWindowAction
+ 
+     init() {
+-        #if !DEBUG
+-            AutomaticUpdates.start()
+-        #endif
++        // Fork builds never update via Sparkle: the fork publishes no
++        // appcast, and upstream's feed must not reach fork users.
+         initAppBundle()
+     }
+ 
+     var body: some Scene {
+-        #if DEBUG
+         menuBar(viewModel: viewModel)
+-        #else
+-        menuBar(
+-            viewModel: viewModel,
+-            checkForUpdates: { AutomaticUpdates.checkForUpdates() },
+-        )
+-        #endif
+         getShortcutSettingsWindow(model: shortcutSettingsModel)
+             .onChange(of: shortcutSettingsModel.openRequestId) { _ in
+                 openShortcutSettingsWindow(openWindow)

@@ -93,6 +93,8 @@ env:
     Sources/Common/appMetadata.swift
     Sources/Common/util/showDiagnosticMessage.swift
     project.yml
+    Sources/SparkleSupport/AutomaticUpdates.swift
+    Sources/WinMuxApp/WinMuxApp.swift
 jobs:
   # ── Stable: sync main from latest upstream release tag ────────────────────
   sync-main:

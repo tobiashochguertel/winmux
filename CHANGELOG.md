@@ -9,6 +9,13 @@ covers fork-only modifications.
 
 ## [Unreleased] — dev.patch
 
+### Removed (`003-remove-sparkle-updater.patch`)
+
+- **Sparkle updater removed from fork builds** — no automatic update
+  checks, no "Check for Updates…" menu item, no upstream appcast contact.
+  The fork publishes no appcast, so the updater could only offer stale or
+  broken updates (e.g. upstream's bogus "1.0" item pointing at 0.5.1).
+
 ### Added (fork identity, `002-fork-identity-and-tcc-reset.patch`)
 
 - **Own bundle ID** — `com.tobiashochguertel.winmux` (debug:

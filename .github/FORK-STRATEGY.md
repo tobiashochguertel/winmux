@@ -46,6 +46,7 @@ Current patches:
 |-------|-----------|-------|--------|
 | CLI automation + sidebar layering (PR #24) | `001-cli-automation-and-sidebar-layer.patch` | 57 modified files (see `PATCHED_FILES`) | `main` + `dev.patch` |
 | Fork identity + TCC reset (own bundle ID, Sparkle off) | `002-fork-identity-and-tcc-reset.patch` | `appMetadata.swift`, `startAtLogin.swift`, `showDiagnosticMessage.swift`, `project.yml`, `makefile`, `README.md` | `dev.patch` |
+| Updater removed (no Sparkle in fork builds) | `003-remove-sparkle-updater.patch` | `WinMuxApp.swift`, `AutomaticUpdates.swift` | `dev.patch` |
 
 > **Overlapping patches:** `002` touches `makefile` and `README.md`, which
 > `001` also modifies. Patches are applied in order (001 → 002), so the sync
