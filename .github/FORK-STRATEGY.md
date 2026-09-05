@@ -187,6 +187,80 @@ git commit -m "feat: integrate PR #<NNN> <description> via .patch"
 git push origin dev.patch
 ```
 
+## Promoting patches to main
+
+`main` is the stable branch. A patch moves from `dev.patch` to `main` only
+when all gates below pass and a human approves the promotion. Promotion is
+**manual** — never automated.
+
+### When to promote
+
+- The patch has been live on `dev.patch` long enough to be validated in real
+  use (no minimum duration, but at least one full sync cycle should have
+  passed without the sync workflow failing).
+- `main` is synced to the latest upstream release tag before the merge.
+- Breaking changes (socket protocol, config format, bundle identifiers)
+  require explicit user sign-off and a note in the merge commit.
+- Patches based on unmerged upstream PRs are promoted only on explicit
+  decision — the fork then owns maintaining them against future upstream
+  releases.
+
+### Mandatory gates (all must pass)
+
+1. `swift test` — all tests green
+2. `swift build -c release --product winmux -Xswiftc -warnings-as-errors`
+3. `.github/workflows/test.yml` CI green on `dev.patch`
+4. `reuse lint` (or `mise run lint-license`) — REUSE compliant
+5. `.github/scripts/validate-patches.py` — patch applies cleanly and is
+   idempotent
+6. `git apply --check` + `git apply --reverse --check` against a clean
+   checkout of `main`
+7. Full sync simulation in a scratch worktree: revert patched files →
+   merge upstream → `apply_patches.sh` re-applies (what a real sync run
+   does)
+8. **Documentation gate** — every promoted feature ships with:
+   - A `CHANGELOG.md` entry (new file + feature, with the patch file name)
+   - Updated user-facing docs (README) if the feature changes behavior,
+     config keys, or the CLI surface
+   - A config reference if the feature adds config options
+     (`resources/default-config.toml` is the source of truth; docs/cli.md
+     for CLI commands)
+
+### Process
+
+```bash
+git checkout main
+git fetch upstream --tags
+# 1. main must be at the latest upstream release tag (sync via workflow if behind)
+
+# 2. Merge dev.patch
+git merge --no-ff dev.patch -m "merge: promote <description> to main
+
+Breaking changes: <none | list>
+Approved by: <name>"
+
+# 3. Update the patch table above (Branch column -> main + dev.patch)
+
+# 4. Push and verify
+git push origin main:main
+git worktree add --detach /tmp/winmux-promo-check main
+# run apply_patches.sh there: all promoted patches must report "already applied"
+```
+
+### Rollback
+
+If a promoted patch breaks on `main`, revert it there without touching
+`dev.patch`:
+
+```bash
+git checkout main
+git revert <merge-commit> -m 1
+git push origin main:main
+```
+
+The patch stays on `dev.patch` until fixed, then the promotion process
+repeats.
+
 ## Rules
 
 - **Never edit upstream files directly** — always via a `.patch` file
