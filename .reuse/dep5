@@ -1,0 +1,12 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: winmux
+Upstream-Contact: Zimeng Xiong
+Source: https://github.com/ZimengXiong/winmux
+
+Files: *
+Copyright: 2026 Zimeng Xiong
+License: MIT
+
+Files: AGENTS.md mise.toml .reuse/dep5 LICENSES/* .github/*
+Copyright: 2026 Zimeng Xiong, 2026 Tobias Hochgürtel
+License: MIT

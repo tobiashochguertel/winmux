@@ -1,0 +1,9 @@
+# Display options for the upstream PR catalog generator.
+# See .github/scripts/generate_upstream_prs.py --help for all options.
+
+files_display: multiline      # multiline | inline
+files_max: 0                  # 0 = show all, N = show first N
+files_show_changes: true      # show +N/-N per file
+files_link_target: pr-diff    # pr-diff | origin | none
+show_size: true               # show total +N/-N column
+link_prs: true                # link PR numbers to GitHub

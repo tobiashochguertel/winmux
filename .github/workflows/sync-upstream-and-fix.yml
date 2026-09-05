@@ -1,0 +1,259 @@
+name: Sync Upstream & Apply Patches
+
+on:
+  schedule:
+    # Check for new upstream releases daily at 07:00 UTC
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "Upstream ref to merge (tag, branch, or SHA). Leave blank for auto-detect."
+        required: false
+        default: ""
+      target_branch:
+        description: "Branch to sync: main (stable, latest tag) or dev.patch (unstable, upstream/main)"
+        required: false
+        default: "both"
+        type: choice
+        options:
+          - both
+          - main
+          - dev.patch
+      force:
+        description: "Force sync even if already up to date"
+        required: false
+        default: "false"
+        type: boolean
+
+# Files that carry our custom patches. These are reverted to upstream's
+# version before merging, then re-applied via .patch files after the merge.
+# This avoids merge conflicts on these files while keeping all other
+# upstream changes clean.
+env:
+  PATCHED_FILES: |
+
+jobs:
+  # ── Stable: sync main from latest upstream release tag ────────────────────
+  sync-main:
+    name: Sync main (stable) ← latest upstream tag
+    runs-on: ubuntu-latest
+    if: github.event.inputs.target_branch != 'dev.patch'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/ZimengXiong/winmux.git || true
+          git fetch upstream --tags --quiet
+
+      - name: Determine upstream ref to merge
+        id: upstream-ref
+        run: |
+          INPUT_REF="${{ github.event.inputs.upstream_ref }}"
+          if [[ -n "$INPUT_REF" ]]; then
+            MERGE_REF="$INPUT_REF"
+          else
+            LATEST_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+            MERGE_REF="${LATEST_TAG:-upstream/main}"
+          fi
+          echo "merge_ref=$MERGE_REF" >> "$GITHUB_OUTPUT"
+          echo "Merging: $MERGE_REF"
+
+      - name: Check if already up to date
+        id: check-uptodate
+        run: |
+          MERGE_REF="${{ steps.upstream-ref.outputs.merge_ref }}"
+          UPSTREAM_SHA=$(git rev-parse "refs/tags/$MERGE_REF" 2>/dev/null || git rev-parse "$MERGE_REF")
+
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
+            if [[ "${{ github.event.inputs.force }}" != "true" ]]; then
+              echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+              echo "main already contains $MERGE_REF — nothing to do."
+            else
+              echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+              echo "Force flag set — proceeding anyway."
+            fi
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream has new commits to merge into main."
+          fi
+
+      - name: Revert patched files to upstream version
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: |
+          MERGE_REF="${{ steps.upstream-ref.outputs.merge_ref }}"
+          UPSTREAM_SHA=$(git rev-parse "refs/tags/$MERGE_REF" 2>/dev/null || git rev-parse "$MERGE_REF")
+          .github/scripts/revert_patched_files.sh "$UPSTREAM_SHA" "$MERGE_REF"
+
+      - name: Merge upstream into main
+        id: merge
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: |
+          MERGE_REF="${{ steps.upstream-ref.outputs.merge_ref }}"
+          if git merge "$MERGE_REF" --no-edit \
+            -m "chore: merge upstream $MERGE_REF into main [skip ci]"; then
+            echo "merge_status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ Merge conflict detected — cannot auto-resolve"
+            git merge --abort
+            echo "merge_status=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail on merge conflict
+        if: steps.merge.outputs.merge_status == 'conflict'
+        run: |
+          echo "::error::Merge conflict with upstream ${{ steps.upstream-ref.outputs.merge_ref }}. Manual resolution required."
+          exit 1
+
+      - name: Apply all patches
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: |
+          .github/scripts/apply_patches.sh
+          git add -A
+          git diff --cached --quiet || git commit -m "fix: re-apply custom patches after upstream merge
+
+          Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+
+      - name: Push updated main
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: git push origin main
+
+      - name: Summary
+        run: |
+          MERGE_REF="${{ steps.upstream-ref.outputs.merge_ref }}"
+          UP_TO_DATE="${{ steps.check-uptodate.outputs.up_to_date }}"
+          if [[ "$UP_TO_DATE" == "true" ]]; then
+            echo "## ✅ main already up to date" >> "$GITHUB_STEP_SUMMARY"
+            echo "main already contains $MERGE_REF." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## ✅ main sync complete" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Merged: \`$MERGE_REF\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ── Unstable: sync dev.patch from upstream/main + all patches ─────────────
+  sync-dev-patch:
+    name: Sync dev.patch (unstable) ← upstream/main
+    runs-on: ubuntu-latest
+    if: github.event.inputs.target_branch != 'main'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout fork dev.patch
+        uses: actions/checkout@v6
+        with:
+          ref: dev.patch
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/ZimengXiong/winmux.git || true
+          git fetch upstream --tags --quiet
+
+      - name: Determine upstream ref to merge
+        id: upstream-ref
+        run: |
+          INPUT_REF="${{ github.event.inputs.upstream_ref }}"
+          if [[ -n "$INPUT_REF" ]]; then
+            MERGE_REF="$INPUT_REF"
+          else
+            MERGE_REF="upstream/main"
+          fi
+          echo "merge_ref=$MERGE_REF" >> "$GITHUB_OUTPUT"
+          echo "Merging: $MERGE_REF"
+
+      - name: Check if already up to date
+        id: check-uptodate
+        run: |
+          MERGE_REF="${{ steps.upstream-ref.outputs.merge_ref }}"
+          UPSTREAM_SHA=$(git rev-parse "$MERGE_REF")
+
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
+            if [[ "${{ github.event.inputs.force }}" != "true" ]]; then
+              echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+              echo "dev.patch already contains $MERGE_REF — nothing to do."
+            else
+              echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+              echo "Force flag set — proceeding anyway."
+            fi
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream has new commits to merge into dev.patch."
+          fi
+
+      - name: Revert patched files to upstream version
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: |
+          MERGE_REF="${{ steps.upstream-ref.outputs.merge_ref }}"
+          UPSTREAM_SHA=$(git rev-parse "$MERGE_REF")
+          .github/scripts/revert_patched_files.sh "$UPSTREAM_SHA" "$MERGE_REF"
+
+      - name: Merge upstream into dev.patch
+        id: merge
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: |
+          MERGE_REF="${{ steps.upstream-ref.outputs.merge_ref }}"
+          if git merge "$MERGE_REF" --no-edit \
+            -m "chore: merge upstream $MERGE_REF into dev.patch [skip ci]"; then
+            echo "merge_status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ Merge conflict detected — cannot auto-resolve"
+            git merge --abort
+            echo "merge_status=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fail on merge conflict
+        if: steps.merge.outputs.merge_status == 'conflict'
+        run: |
+          echo "::error::Merge conflict with upstream ${{ steps.upstream-ref.outputs.merge_ref }}. Manual resolution required."
+          exit 1
+
+      - name: Apply all patches
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: .github/scripts/apply_patches.sh
+
+      - name: Commit patches
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: |
+          git add -A
+          git diff --cached --quiet || git commit -m "fix: re-apply custom patches after upstream merge
+
+          Co-authored-by: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+
+      - name: Push updated dev.patch
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: git push origin dev.patch
+
+      - name: Summary
+        run: |
+          MERGE_REF="${{ steps.upstream-ref.outputs.merge_ref }}"
+          UP_TO_DATE="${{ steps.check-uptodate.outputs.up_to_date }}"
+          if [[ "$UP_TO_DATE" == "true" ]]; then
+            echo "## ✅ dev.patch already up to date" >> "$GITHUB_STEP_SUMMARY"
+            echo "dev.patch already contains $MERGE_REF." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## ✅ dev.patch sync complete" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Merged: \`$MERGE_REF\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Patches re-applied via apply_patches.sh" >> "$GITHUB_STEP_SUMMARY"
+          fi

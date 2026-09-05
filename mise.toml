@@ -1,0 +1,13 @@
+[tools]
+"pipx:reuse" = "latest"
+
+[tasks.lint-license]
+description = "Check REUSE license compliance"
+run = "reuse lint"
+
+[tasks.lint]
+description = "Run all lints (source + license)"
+run = [
+    "reuse lint",
+    # TODO: add project-specific linter (e.g. go vet, ruff, biome)
+]
