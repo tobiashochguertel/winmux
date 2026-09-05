@@ -16,6 +16,9 @@ CLI_STAGE_PATH ?= $(RELEASE_DIR)/winmux
 LOCAL_INSTALL_ROOT ?= $(CURDIR)/.local/install
 INSTALL_LOCK_HELD ?= 0
 LAUNCH_AFTER_INSTALL ?= 1
+APP_BUNDLE_ID ?= com.tobiashochguertel.winmux
+TCC_RESET ?= 1
+TCC_SERVICES ?= Accessibility
 SPARKLE_PUBLIC_KEY ?= kcc3956V3+Yo8GtwFJ8Odb9sphIr09/9dsuoYBNtxf0=
 ARGS ?=
 
@@ -219,8 +222,19 @@ install:
 	fi; \
 	cleanup_install_lock() { rmdir "$$install_lock" >/dev/null 2>&1 || true; }; \
 	trap cleanup_install_lock EXIT; \
+	if [ "$(TCC_RESET)" = "1" ]; then \
+	    for service in $(TCC_SERVICES); do \
+	        if tccutil reset "$$service" "$(APP_BUNDLE_ID)" 2>/dev/null; then \
+	            echo "Reset TCC $$service for $(APP_BUNDLE_ID)"; \
+	        else \
+	            echo "TCC $$service: nothing to reset for $(APP_BUNDLE_ID) (fresh install)"; \
+	        fi; \
+	    done; \
+	else \
+	    echo "Skipping TCC reset because TCC_RESET=$(TCC_RESET)"; \
+	fi; \
 	$(MAKE) release VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" GENERATE_APPCAST=0 PUBLISH=0; \
-	$(MAKE) install-staged VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" CLI_STAGE_PATH="$(CLI_STAGE_PATH)" LOCAL_INSTALL_ROOT="$(LOCAL_INSTALL_ROOT)" APP_INSTALL_DIR="$(APP_INSTALL_DIR)" INSTALL_LOCK_HELD=1 LAUNCH_AFTER_INSTALL="$(LAUNCH_AFTER_INSTALL)"'
+	$(MAKE) install-staged VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" CLI_STAGE_PATH="$(CLI_STAGE_PATH)" LOCAL_INSTALL_ROOT="$(LOCAL_INSTALL_ROOT)" APP_INSTALL_DIR="$(APP_INSTALL_DIR)" INSTALL_LOCK_HELD=1 LAUNCH_AFTER_INSTALL="$(LAUNCH_AFTER_INSTALL)" APP_BUNDLE_ID="$(APP_BUNDLE_ID)"'
 
 install-staged:
 	/bin/bash -lc 'cd "$(CURDIR)" && \

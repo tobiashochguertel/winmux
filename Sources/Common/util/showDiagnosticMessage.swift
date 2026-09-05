@@ -5,7 +5,7 @@ func showDiagnosticMessage(filenameIfConsoleApp: String, title: String, message:
     if isCli {
         print(titleAndMessage)
     } else {
-        let cachesDir = URL(filePath: "/tmp/com.zimengxiong.winmux/")
+        let cachesDir = URL(filePath: "/tmp/\(stableWinMuxAppId)/")
         Result { try FileManager.default.createDirectory(at: cachesDir, withIntermediateDirectories: true) }.getOrDie()
         let file = cachesDir.appending(component: filenameIfConsoleApp)
         Result { try (titleAndMessage + "\n").write(to: file, atomically: true, encoding: .utf8) }.getOrDie()
