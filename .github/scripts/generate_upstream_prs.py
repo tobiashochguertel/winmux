@@ -112,7 +112,7 @@ CONFLICT_PRONE_FILES = set()
 
 # PRs already integrated in this fork
 ALREADY_INTEGRATED = {
-    24: ("Expand CLI automation and add configurable sidebar layering", "dev.patch", "001-cli-automation-and-sidebar-layer.patch"),
+    24: ("Expand CLI automation and add configurable sidebar layering", "main + dev.patch", "001-cli-automation-and-sidebar-layer.patch"),
 }
 
 # PRs to exclude (dependabot, docs-only, etc.)

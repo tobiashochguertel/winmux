@@ -40,6 +40,12 @@ all `.patch` files in `.github/patches/` in alphabetical order.
 
 There are no patches yet — this fork currently tracks upstream cleanly.
 
+Current patches:
+
+| Patch | Patch file | Files | Branch |
+|-------|-----------|-------|--------|
+| CLI automation + sidebar layering (PR #24) | `001-cli-automation-and-sidebar-layer.patch` | 57 modified files (see `PATCHED_FILES`) | `main` + `dev.patch` |
+
 ## How the sync works
 
 The `sync-upstream-and-fix.yml` workflow runs daily at 07:00 UTC (or manually).
