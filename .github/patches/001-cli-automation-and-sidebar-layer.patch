@@ -1,0 +1,3437 @@
+diff --git a/Package.swift b/Package.swift
+index a5891016..2d168519 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -89,6 +89,7 @@ let package = Package(
+             name: "AppBundleTests",
+             dependencies: [
+                 .target(name: "AppBundle"),
++                .target(name: "Cli"),
+             ],
+             path: "Sources/AppBundleTests",
+         ),
+diff --git a/README.md b/README.md
+index 736373e4..0a7ee838 100644
+--- a/README.md
++++ b/README.md
+@@ -26,6 +26,7 @@ contrast across the sidebar, tab groups, and switcher:
+ ```toml
+ [workspace-sidebar]
+     auto-hide = true
++    stay-on-top = false # Let the Dock appear above the sidebar.
+     chrome-style = 'solid'
+     solid-chrome-color = 'lavender' # Choose any color shown in Appearance, including custom.
+ ```
+@@ -165,9 +166,103 @@ Release builds are signed with the project's Apple Development certificate. They
+ 
+ WinMux checks GitHub Releases for signed updates automatically. You can also select **Check for Updates…** from the menu bar.
+ 
++### Command-line client
++
++WinMux includes an AeroSpace-style `winmux` client. The client and app communicate over a
++local Unix socket and should normally come from the same installation. An incompatible socket
++protocol is rejected before a command runs; differing app versions or Git revisions remain
++diagnostic information rather than a protocol gate. A debug client talks only to
++`WinMux-Debug`; use a release client with the installed `WinMux.app`.
++
++For everyday commands, shell automation, project workflows, and the complete command index,
++see the [CLI usage guide](docs/cli.md).
++
++Build a universal release client without installing it:
++
++```shell
++make cli-release VERSION=<version>
++.release/winmux --version
++```
++
++`make install VERSION=<version>` builds and installs the app and client as one versioned
++pair under `.local/install/releases/`, updates `.local/install/current`, installs the app in
++`/Applications`, and makes the paired client available to local wrapper integrations at:
++
++```text
++.local/install/current/bin/winmux
++```
++
++Release builds also produce `WinMux-<version>-macOS.zip`, containing both `WinMux.app`
++and `bin/winmux`; the app-only zip remains separate for Sparkle updates. A local ad-hoc
++build can be installed without the publishing key using:
++
++```shell
++make install VERSION=<version> CODESIGN_IDENTITY=- CODESIGN_STYLE=Manual \
++  DEVELOPMENT_TEAM= EXPECTED_CODESIGN_AUTHORITY_PREFIX=
++```
++
++To install the matched pair without launching WinMux or opening System Settings, add
++`LAUNCH_AFTER_INSTALL=0`. This performs only the offline signature, architecture, archive,
++and pair checks; run `make verify-installed` after a later launch.
++
++macOS invalidates Accessibility approval when an ad-hoc signature changes. The installer
++opens Privacy & Security > Accessibility when reapproval is required; enable WinMux there,
++then relaunch the app and run `make verify-installed`. Until that command succeeds, the
++installer reports the pair as installed but unverified rather than treating every launch
++failure as an Accessibility problem. A previous app is preserved beside
++`/Applications/WinMux.app` until the new client/server pair has been verified.
++
++The command surface follows AeroSpace conventions, including `--help`, `--version`, query
++commands with `--json`, explicit `--window-id` targeting, and nonzero exit status on command
++errors. WinMux-specific commands add projects, tab groups, the sidebar, and the structured
++agent workflow:
++
++```shell
++winmux list-windows --all --json
++winmux list-workspaces --all --json
++winmux agent skill
++winmux agent query --path /tmp/winmux-agent.json
++```
++
++`agent check` and `agent apply` accept either `--path <path>` or explicit `--stdin`,
++so deterministic shell transforms can keep the full freshness-guarded snapshot in a pipe:
++
++```shell
++winmux agent query | jq '<edit transformation>' | winmux agent apply --stdin
++```
++
++Implicit stdin is never consumed.
++
++#### Socket protocol
++
++Release builds listen on `/tmp/com.zimengxiong.winmux-${USER}.sock`; debug builds use
++`/tmp/com.zimengxiong.winmux.debug-${USER}.sock`. All integers are four-byte unsigned values
++in host byte order (little-endian on supported Macs).
++
++Immediately after connecting, the client sends `SOCKET_PROTOCOL_VERSION` and the server
++answers with its own `SOCKET_PROTOCOL_VERSION`. The current value is `1`. Either side stops
++before processing a command when the versions differ. Once negotiation succeeds, each message
++is a four-byte JSON byte length followed by that many UTF-8 JSON bytes. Ordinary commands send
++one `ClientRequest` and receive one `ServerAnswer`; `subscribe` receives a stream of framed
++events after its initial request.
++
++Incoming JSON frames are limited to 128 MiB and are rejected from their length prefix before
++payload storage is allocated. This is above the roughly 96 MiB worst-case JSON expansion of the
++official CLI's 16 MiB UTF-8 stdin limit, with additional room for the request envelope.
++
++The handshake is intentionally incompatible with the legacy pre-handshake socket. Upgrade or
++roll back `WinMux.app` and `winmux` together. The client bounds negotiation so accidentally
++connecting a new CLI to a legacy server reports an upgrade error instead of waiting forever.
++
+ ### Release updates
+ 
+-`make release VERSION=<version>` creates a signed `appcast.xml` alongside the release archive and uploads both to the GitHub release. Sparkle signs the appcast with the Ed25519 key in the local login Keychain. The matching public key is set through `SPARKLE_PUBLIC_KEY` in the makefile; keep the private key in the Keychain and do not commit or share it.
++`make release VERSION=<version>` currently builds locally without publishing or generating
++an appcast. During the socket protocol-v1 migration, an app-only Sparkle update would leave
++an older CLI behind, so appcast generation is refused unless the maintainer deliberately sets
++`GENERATE_APPCAST=1 ALLOW_APP_ONLY_PROTOCOL_UPDATE=1`. Prefer the combined archive containing
++both `WinMux.app` and `bin/winmux`. When app-only updates are compatible again, Sparkle signs
++the appcast with the Ed25519 key in the local login Keychain. The matching public key is set
++through `SPARKLE_PUBLIC_KEY`; keep the private key in the Keychain and do not commit or share it.
+ 
+ Publishing a stable GitHub release also updates `Casks/winmux.rb` in `ZimengXiong/homebrew`. Before the first release, add a `HOMEBREW_TAP_TOKEN` repository secret to this repository. The token must have read and write access to the contents of `ZimengXiong/homebrew`.
+ 
+diff --git a/Sources/AppBundle/command/Command.swift b/Sources/AppBundle/command/Command.swift
+index 7da92b97..27c09653 100644
+--- a/Sources/AppBundle/command/Command.swift
++++ b/Sources/AppBundle/command/Command.swift
+@@ -34,6 +34,7 @@ extension Command {
+         switch self {
+             case is BalanceSizesCommand,
+                  is ConfigCommand,
++                 is CreateProjectCommand,
+                  is DebugWindowsCommand,
+                  is FlattenWorkspaceTreeCommand,
+                  is FocusBackAndForthCommand,
+@@ -46,6 +47,7 @@ extension Command {
+                  is ListExecEnvVarsCommand,
+                  is ListModesCommand,
+                  is ListMonitorsCommand,
++                 is ListProjectsCommand,
+                  is ListWindowsCommand,
+                  is ListWorkspacesCommand,
+                  is ModeCommand,
+@@ -57,15 +59,19 @@ extension Command {
+                  is MoveWorkspaceToMonitorCommand,
+                  is OpenSidebarCommand,
+                  is ProjectCommand,
++                 is RenameProjectCommand,
+                  is ResizeCommand,
+                  is SplitCommand,
+                  is StackWithCommand,
++                 is SetProjectColorCommand,
+                  is SummonWorkspaceCommand,
+                  is SwapCommand,
+                  is VolumeCommand,
+                  is WorkspaceBackAndForthCommand,
+                  is WorkspaceCommand:
+                 true
++            case is DeleteProjectCommand:
++                false
+             default:
+                 false
+         }
+diff --git a/Sources/AppBundle/command/cmdManifest.swift b/Sources/AppBundle/command/cmdManifest.swift
+index e95a67fc..b248797b 100644
+--- a/Sources/AppBundle/command/cmdManifest.swift
++++ b/Sources/AppBundle/command/cmdManifest.swift
+@@ -8,7 +8,9 @@ extension CmdArgs {
+             case let args as CloseCmdArgs: CloseCommand(args: args)
+             case let args as CloseAllWindowsButCurrentCmdArgs: CloseAllWindowsButCurrentCommand(args: args)
+             case let args as ConfigCmdArgs: ConfigCommand(args: args)
++            case let args as CreateProjectCmdArgs: CreateProjectCommand(args: args)
+             case let args as DebugWindowsCmdArgs: DebugWindowsCommand(args: args)
++            case let args as DeleteProjectCmdArgs: DeleteProjectCommand(args: args)
+             case let args as DoctorCmdArgs: DoctorCommand(args: args)
+             case let args as EnableCmdArgs: EnableCommand(args: args)
+             case is ExecAndForgetCmdArgs: die("exec-and-forget is parsed separately")
+@@ -23,6 +25,7 @@ extension CmdArgs {
+             case let args as ListExecEnvVarsCmdArgs: ListExecEnvVarsCommand(args: args)
+             case let args as ListModesCmdArgs: ListModesCommand(args: args)
+             case let args as ListMonitorsCmdArgs: ListMonitorsCommand(args: args)
++            case let args as ListProjectsCmdArgs: ListProjectsCommand(args: args)
+             case let args as ListWindowsCmdArgs: ListWindowsCommand(args: args)
+             case let args as ListWorkspacesCmdArgs: ListWorkspacesCommand(args: args)
+             case let args as MacosNativeFullscreenCmdArgs: MacosNativeFullscreenCommand(args: args)
+@@ -38,9 +41,11 @@ extension CmdArgs {
+             case let args as PaletteCmdArgs: PaletteCommand(args: args)
+             case let args as ProjectCmdArgs: ProjectCommand(args: args)
+             case let args as ReloadConfigCmdArgs: ReloadConfigCommand(args: args)
++            case let args as RenameProjectCmdArgs: RenameProjectCommand(args: args)
+             case let args as ResizeCmdArgs: ResizeCommand(args: args)
+             case let args as SplitCmdArgs: SplitCommand(args: args)
+             case let args as StackWithCmdArgs: StackWithCommand(args: args)
++            case let args as SetProjectColorCmdArgs: SetProjectColorCommand(args: args)
+             case is SubscribeCmdArgs: die("subscribe is handled separately")
+             case let args as SummonWorkspaceCmdArgs: SummonWorkspaceCommand(args: args)
+             case let args as SwapCmdArgs: SwapCommand(args: args)
+diff --git a/Sources/AppBundle/command/format.swift b/Sources/AppBundle/command/format.swift
+index 9b61a659..eeb15218 100644
+--- a/Sources/AppBundle/command/format.swift
++++ b/Sources/AppBundle/command/format.swift
+@@ -3,6 +3,7 @@ import Common
+ enum FormatObject {
+     case window(window: Window, title: String)
+     case workspace(Workspace)
++    case project(ProjectFormatObject)
+     case app(any AbstractApp)
+     case monitor(Monitor)
+ 
+@@ -10,12 +11,23 @@ enum FormatObject {
+         switch self {
+             case .window: .window
+             case .workspace: .workspace
++            case .project: .project
+             case .app: .app
+             case .monitor: .monitor
+         }
+     }
+ }
+ 
++struct ProjectFormatObject {
++    let index: Int
++    let project: WorkspaceProject
++    let colorHex: String?
++    let isFocused: Bool
++    let isVisible: Bool
++    let workspaceCount: Int
++    let windowCount: Int
++}
++
+ extension [FormatObject] {
+     @MainActor
+     func writeFormattedOutput(
+@@ -127,11 +139,13 @@ extension String {
+             case (.window(let w, _), .app):
+                 return expandFormatVar(obj: .app(w.app))
+             case (.window(_, _), .window): break
++            case (.window, .project): break
+ 
+             case (.workspace(let ws), .monitor):
+                 return expandFormatVar(obj: FormatObject.monitor(ws.workspaceMonitor))
+             case (.workspace, _): break
+ 
++            case (.project, _): break
+             case (.app(_), _): break
+             case (.monitor(_), _): break
+         }
+@@ -150,6 +164,17 @@ extension String {
+                     case .workspaceFocused: .success(.bool(focus.workspace == w))
+                     case .workspaceRootContainerLayout: .success(.string(toLayoutString(tc: w.rootTilingContainer)))
+                 }
++            case (.project(let p), .project(let f)):
++                return switch f {
++                    case .projectIndex: .success(.int(p.index))
++                    case .projectId: .success(.string(p.project.id.rawValue))
++                    case .projectName: .success(.string(p.project.name))
++                    case .projectColor: .success(.string(p.colorHex ?? "auto"))
++                    case .projectFocused: .success(.bool(p.isFocused))
++                    case .projectVisible: .success(.bool(p.isVisible))
++                    case .projectWorkspaceCount: .success(.int(p.workspaceCount))
++                    case .projectWindowCount: .success(.int(p.windowCount))
++                }
+             case (.monitor(let m), .monitor(let f)):
+                 return switch f {
+                     case .monitorId_oneBased: .success(m.monitorId_oneBased.map { .int($0) } ?? .string("NULL-MONITOR-ID"))
+@@ -176,6 +201,7 @@ extension String {
+     private func toFormatVar() -> FormatVar? {
+         FormatVar.WindowFormatVar(rawValue: self).flatMap(FormatVar.window)
+             ?? FormatVar.WorkspaceFormatVar(rawValue: self).flatMap(FormatVar.workspace)
++            ?? FormatVar.ProjectFormatVar(rawValue: self).flatMap(FormatVar.project)
+             ?? FormatVar.AppFormatVar(rawValue: self).flatMap(FormatVar.app)
+             ?? FormatVar.MonitorFormatVar(rawValue: self).flatMap(FormatVar.monitor)
+     }
+diff --git a/Sources/AppBundle/command/impl/MoveNodeToProjectCommand.swift b/Sources/AppBundle/command/impl/MoveNodeToProjectCommand.swift
+index 53d46c1a..fca80447 100644
+--- a/Sources/AppBundle/command/impl/MoveNodeToProjectCommand.swift
++++ b/Sources/AppBundle/command/impl/MoveNodeToProjectCommand.swift
+@@ -11,7 +11,7 @@ struct MoveNodeToProjectCommand: Command {
+             return io.err("Window \(window.windowId) doesn't belong to any workspace")
+         }
+         guard let project = resolveProjectTarget(args.target.val, currentProjectId: sourceWorkspace.projectId, wrapAround: args.wrapAround) else {
+-            return io.err("Can't resolve project target")
++            return io.err(projectTargetResolutionError(args.target.val))
+         }
+         let monitor = window.nodeMonitor ?? sourceWorkspace.workspaceMonitor
+         let targetWorkspace = firstWorkspaceForProjectMove(projectId: project.id, monitor: monitor)
+@@ -37,6 +37,8 @@ func resolveProjectTarget(
+     switch target {
+         case .index(let index):
+             return projects.getOrNil(atIndex: index - 1)
++        case .directId(let id):
++            return projects.first { $0.id.rawValue == id }
+         case .relative(let nextPrev):
+             guard let currentIndex = projects.firstIndex(where: { $0.id == currentProjectId }) else { return nil }
+             let targetIndex = currentIndex + (nextPrev == .next ? 1 : -1)
+@@ -44,6 +46,14 @@ func resolveProjectTarget(
+     }
+ }
+ 
++func projectTargetResolutionError(_ target: ProjectTarget) -> String {
++    switch target {
++        case .directId(let id): "Project '\(id)' doesn't exist"
++        case .index(let index): "Project index \(index) is out of range"
++        case .relative: "Can't resolve project target"
++    }
++}
++
+ @MainActor
+ private func firstWorkspaceForProjectMove(projectId: WorkspaceProjectId, monitor: Monitor) -> Workspace {
+     availablePreferredWorkspace(projectId: projectId, monitor: monitor)
+diff --git a/Sources/AppBundle/command/impl/MoveNodeToWorkspaceCommand.swift b/Sources/AppBundle/command/impl/MoveNodeToWorkspaceCommand.swift
+index 91c08467..79026d22 100644
+--- a/Sources/AppBundle/command/impl/MoveNodeToWorkspaceCommand.swift
++++ b/Sources/AppBundle/command/impl/MoveNodeToWorkspaceCommand.swift
+@@ -10,6 +10,12 @@ struct MoveNodeToWorkspaceCommand: Command {
+         let subjectWs = window.nodeWorkspace
+         let targetWorkspace: Workspace
+         switch args.target.val {
++            case .newWorkspace:
++                guard let subjectWs else { return io.err("Window \(window.windowId) doesn't belong to any workspace") }
++                targetWorkspace = getOrCreateAdjacentBlankWorkspace(
++                    projectId: subjectWs.projectId,
++                    monitor: window.nodeMonitor ?? target.workspace.workspaceMonitor,
++                )
+             case .relative(let nextPrev):
+                 guard let subjectWs else { return io.err("Window \(window.windowId) doesn't belong to any workspace") }
+                 let ws = getNextPrevWorkspace(
+diff --git a/Sources/AppBundle/command/impl/ProjectCommand.swift b/Sources/AppBundle/command/impl/ProjectCommand.swift
+index 3e0cf0ed..fb375279 100644
+--- a/Sources/AppBundle/command/impl/ProjectCommand.swift
++++ b/Sources/AppBundle/command/impl/ProjectCommand.swift
+@@ -9,7 +9,7 @@ struct ProjectCommand: Command {
+         let monitor = target.workspace.workspaceMonitor
+         let currentProjectId = activeWorkspaceProjectId(for: monitor)
+         guard let project = resolveProjectTarget(args.target.val, currentProjectId: currentProjectId, wrapAround: args.wrapAround) else {
+-            return io.err("Can't resolve project target")
++            return io.err(projectTargetResolutionError(args.target.val))
+         }
+         if project.id == currentProjectId {
+             if !args.failIfNoop {
+diff --git a/Sources/AppBundle/command/impl/agent/AgentCommand.swift b/Sources/AppBundle/command/impl/agent/AgentCommand.swift
+index 15c2692f..475c5b25 100644
+--- a/Sources/AppBundle/command/impl/agent/AgentCommand.swift
++++ b/Sources/AppBundle/command/impl/agent/AgentCommand.swift
+@@ -10,7 +10,12 @@ struct AgentCommand: Command {
+     func run(_ env: CmdEnv, _ io: CmdIo) async throws -> Bool {
+         switch args.subcommand.val {
+             case .query:
+-                let snapshot = try await AgentSnapshot.query()
++                let snapshot: AgentSnapshot
++                do {
++                    snapshot = try await AgentSnapshot.query()
++                } catch let error as AgentSnapshotQueryError {
++                    return io.err(error.localizedDescription)
++                }
+                 guard let json = JSONEncoder.winMuxDefault.encodeToString(snapshot) else {
+                     return io.err("Failed to encode agent snapshot")
+                 }
+@@ -22,7 +27,7 @@ struct AgentCommand: Command {
+             case .check:
+                 let request: AgentRequest
+                 do {
+-                    request = try AgentRequest.read(path: args.path.orDie())
++                    request = try readRequest(io)
+                 } catch {
+                     return io.err("Failed to read agent JSON: \(describeAgentJsonError(error))")
+                 }
+@@ -34,7 +39,7 @@ struct AgentCommand: Command {
+             case .apply:
+                 let request: AgentRequest
+                 do {
+-                    request = try AgentRequest.read(path: args.path.orDie())
++                    request = try readRequest(io)
+                 } catch {
+                     return io.err("Failed to read agent JSON: \(describeAgentJsonError(error))")
+                 }
+@@ -48,6 +53,13 @@ struct AgentCommand: Command {
+                 return io.out(agentSkillText)
+         }
+     }
++
++    private func readRequest(_ io: CmdIo) throws -> AgentRequest {
++        if args.useStdin {
++            return try AgentRequest.read(stdin: io.readStdin())
++        }
++        return try AgentRequest.read(path: args.path.orDie())
++    }
+ }
+ 
+ private func describeAgentJsonError(_ error: Error) -> String {
+@@ -72,14 +84,14 @@ private func describeAgentJsonError(_ error: Error) -> String {
+ private let agentSkillText = """
+     ---
+     name: winmux-agent
+-    description: Use when arranging WinMux windows through the agent JSON interface. Query to a file, read that exact file, edit it, then apply that exact file.
++    description: Use when arranging WinMux windows through the agent JSON interface. Start from a fresh query, edit only its edit object, then apply the result from a file or explicit stdin.
+     ---
+ 
+     # WinMux Agent
+ 
+-    You MUST use the file workflow. Do not guess operation names. Do not search the repository for docs. This skill is the command reference.
++    You MUST start from a fresh `winmux agent query`. Do not guess operation names. Do not search the repository for docs. This skill is the command reference.
+ 
+-    Required workflow for every user request:
++    Recommended file workflow for agent-driven edits:
+     1. Query the current state into a JSON file:
+        `winmux agent query --path /tmp/winmux-agent.json`
+     2. Read the file you just wrote:
+@@ -94,6 +106,11 @@ private let agentSkillText = """
+     7. If apply says the JSON is stale or the `worldId` does not match, discard `/tmp/winmux-agent.json`, run the query command again, read the new file, redo the edit, and apply again.
+     8. Return a short summary of what changed.
+ 
++    A deterministic shell transform may instead use an explicit stdin pipeline:
++    `winmux agent query | jq '<edit transformation>' | winmux agent apply --stdin`
++    `check` also accepts stdin: `winmux agent query | jq '<edit transformation>' | winmux agent check --stdin`.
++    `--stdin` is always explicit and is incompatible with `--path`. Never rely on redirected input being detected implicitly.
++
+     Usually skip the separate check command. `apply` validates before changing anything. Use `winmux agent check --path /tmp/winmux-agent.json` only for complex edits or after a failed apply.
+ 
+     The file includes a `worldId` freshness guard. If windows move, close, change fullscreen state, or the user manually changes the layout, discard the file and query again.
+diff --git a/Sources/AppBundle/command/impl/agent/AgentRequest.swift b/Sources/AppBundle/command/impl/agent/AgentRequest.swift
+index 3823e5b8..1b19ee46 100644
+--- a/Sources/AppBundle/command/impl/agent/AgentRequest.swift
++++ b/Sources/AppBundle/command/impl/agent/AgentRequest.swift
+@@ -4,6 +4,8 @@ import Foundation
+ 
+ // MARK: - Input
+ 
++let supportedAgentSchemaVersion = 1
++
+ struct AgentRequest: Decodable {
+     let schemaVersion: Int?
+     let snapshotId: String?
+@@ -12,7 +14,15 @@ struct AgentRequest: Decodable {
+ 
+     static func read(path: String) throws -> AgentRequest {
+         let data = try Data(contentsOf: URL(filePath: path))
+-        return try JSONDecoder().decode(AgentRequest.self, from: data)
++        return try decode(data)
++    }
++
++    static func read(stdin: String) throws -> AgentRequest {
++        try decode(Data(stdin.utf8))
++    }
++
++    private static func decode(_ data: Data) throws -> AgentRequest {
++        try JSONDecoder().decode(AgentRequest.self, from: data)
+     }
+ 
+     var operations: [AgentOperation] {
+@@ -22,6 +32,7 @@ struct AgentRequest: Decodable {
+     @MainActor
+     func validate() async throws -> [String] {
+         var errors: [String] = []
++        validateSchemaVersion(appendTo: &errors)
+         validateFreshWorldId(appendTo: &errors)
+         guard errors.isEmpty else { return errors }
+         var context = AgentValidationContext()
+@@ -34,15 +45,25 @@ struct AgentRequest: Decodable {
+         return errors
+     }
+ 
++    private func validateSchemaVersion(appendTo errors: inout [String]) {
++        if let schemaVersion {
++            if schemaVersion != supportedAgentSchemaVersion {
++                errors.append("Unsupported agent schemaVersion '\(schemaVersion)'. Expected '\(supportedAgentSchemaVersion)'. Run 'winmux agent query' again and rebuild the request before applying.")
++            }
++        } else {
++            errors.append("Agent JSON is missing schemaVersion. Run 'winmux agent query' again and rebuild the request before applying.")
++        }
++    }
++
+     @MainActor
+     func validateFreshWorldId(appendTo errors: inout [String]) {
+         if let worldId {
+             let currentWorldId = currentAgentWorldId()
+             if worldId != currentWorldId {
+-                errors.append("Agent JSON is stale: worldId '\(worldId)' does not match current worldId '\(currentWorldId)'. Run 'winmux agent query --path <path>' again before applying.")
++                errors.append("Agent JSON is stale: worldId '\(worldId)' does not match current worldId '\(currentWorldId)'. Run 'winmux agent query' again and rebuild the request before applying.")
+             }
+-        } else if snapshotId != nil {
+-            errors.append("Agent JSON is missing worldId. Run 'winmux agent query --path <path>' again before applying.")
++        } else {
++            errors.append("Agent JSON is missing worldId. Run 'winmux agent query' again and rebuild the request before applying.")
+         }
+     }
+ 
+@@ -90,4 +111,3 @@ struct AgentLayoutEdit: Codable {
+         }
+     }
+ }
+-
+diff --git a/Sources/AppBundle/command/impl/agent/AgentSnapshot.swift b/Sources/AppBundle/command/impl/agent/AgentSnapshot.swift
+index 70f3f162..f78e7604 100644
+--- a/Sources/AppBundle/command/impl/agent/AgentSnapshot.swift
++++ b/Sources/AppBundle/command/impl/agent/AgentSnapshot.swift
+@@ -4,6 +4,29 @@ import Foundation
+ 
+ // MARK: - Query
+ 
++let agentSnapshotQueryMaxAttempts = 2
++
++@MainActor
++private var agentSnapshotAfterMembershipCaptureForTests: (@MainActor @Sendable (Int) async -> Void)?
++
++@MainActor
++func setAgentSnapshotAfterMembershipCaptureForTests(
++    _ hook: (@MainActor @Sendable (Int) async -> Void)?
++) {
++    agentSnapshotAfterMembershipCaptureForTests = hook
++}
++
++enum AgentSnapshotQueryError: LocalizedError {
++    case worldKeptChanging(attempts: Int)
++
++    var errorDescription: String? {
++        switch self {
++            case .worldKeptChanging(let attempts):
++                "Window state kept changing while WinMux built the agent snapshot after \(attempts) attempts. Retry 'winmux agent query' after window movement settles."
++        }
++    }
++}
++
+ struct AgentSnapshot: Encodable {
+     let schemaVersion: Int
+     let snapshotId: String
+@@ -14,9 +37,41 @@ struct AgentSnapshot: Encodable {
+ 
+     @MainActor
+     static func query() async throws -> AgentSnapshot {
++        for attempt in 1 ... agentSnapshotQueryMaxAttempts {
++            let worldId = currentAgentWorldId()
++            let capture = AgentSnapshotCapture()
++            if let hook = agentSnapshotAfterMembershipCaptureForTests {
++                await hook(attempt)
++            }
++
++            do {
++                let snapshot = try await capture.makeSnapshot(worldId: worldId)
++                if currentAgentWorldId() == worldId {
++                    return snapshot
++                }
++            } catch {
++                if currentAgentWorldId() == worldId {
++                    throw error
++                }
++            }
++        }
++        throw AgentSnapshotQueryError.worldKeptChanging(attempts: agentSnapshotQueryMaxAttempts)
++    }
++}
++
++@MainActor
++private struct AgentSnapshotCapture {
++    let windows: [Window]
++    let tabGroups: [TilingContainer]
++    let workspaceInfos: [AgentWorkspaceInfo]
++    let panes: [AgentPaneInfo]
++    let relations: [AgentPaneRelation]
++    let rawTrees: [AgentRawWorkspaceTree]
++
++    init() {
+         let workspaces = userFacingWorkspaces(Workspace.all, focusedWorkspace: focus.workspace)
+-        var windows: [AgentWindowInfo] = []
+-        var tabGroups: [AgentTabGroupInfo] = []
++        var windowNodes: [Window] = []
++        var tabGroupNodes: [TilingContainer] = []
+         var workspaceInfos: [AgentWorkspaceInfo] = []
+         var allPanes: [AgentPaneInfo] = []
+         var allRelations: [AgentPaneRelation] = []
+@@ -36,28 +91,44 @@ struct AgentSnapshot: Encodable {
+                 monitorId: workspace.workspaceMonitor.monitorId_oneBased,
+                 panes: panes.map(\.paneId),
+             ))
+-            for group in workspace.rootTilingContainer.allAgentTabGroupsRecursive {
+-                tabGroups.append(await AgentTabGroupInfo(group))
+-            }
+-            for window in workspace.allLeafWindowsRecursive {
+-                windows.append(try await AgentWindowInfo(window))
+-            }
++            tabGroupNodes.append(contentsOf: workspace.rootTilingContainer.allAgentTabGroupsRecursive)
++            windowNodes.append(contentsOf: workspace.allLeafWindowsRecursive)
++        }
++        windowNodes.append(contentsOf: macosMinimizedWindowsContainer.children.filterIsInstance(of: Window.self))
++
++        var seenWindowIds: Set<UInt32> = []
++        windows = windowNodes.filter { seenWindowIds.insert($0.windowId).inserted }
++        tabGroups = tabGroupNodes
++        self.workspaceInfos = workspaceInfos
++        panes = allPanes
++        relations = allRelations
++        self.rawTrees = rawTrees
++    }
++
++    func makeSnapshot(worldId: String) async throws -> AgentSnapshot {
++        var windowInfos: [AgentWindowInfo] = []
++        for window in windows {
++            windowInfos.append(try await AgentWindowInfo(window))
++        }
++        var tabGroupInfos: [AgentTabGroupInfo] = []
++        for group in tabGroups {
++            tabGroupInfos.append(await AgentTabGroupInfo(group))
+         }
+ 
+         let inventory = AgentInventory(
+-            windows: windows.sortedBy(\.windowId),
+-            tabGroups: tabGroups.sortedBy(\.tabGroupId),
++            windows: windowInfos.sortedBy(\.windowId),
++            tabGroups: tabGroupInfos.sortedBy(\.tabGroupId),
+             workspaces: workspaceInfos.sortedBy(\.name),
+         )
+         let reasoning = AgentReasoning(
+-            panes: allPanes.sortedBy(\.paneId),
+-            relations: allRelations.sortedBy([{ $0.workspace }, { $0.paneId }]),
++            panes: panes.sortedBy(\.paneId),
++            relations: relations.sortedBy([{ $0.workspace }, { $0.paneId }]),
+             rawTrees: rawTrees.sortedBy(\.workspace),
+         )
+         return AgentSnapshot(
+-            schemaVersion: 1,
++            schemaVersion: supportedAgentSchemaVersion,
+             snapshotId: ISO8601DateFormatter().string(from: Date()),
+-            worldId: currentAgentWorldId(),
++            worldId: worldId,
+             inventory: inventory,
+             reasoning: reasoning,
+             edit: AgentEditTemplate(operations: [], layout: nil),
+@@ -104,7 +175,7 @@ struct AgentWindowInfo: Encodable {
+         appName = window.app.name
+         appBundleId = window.app.rawAppBundleId
+         pid = window.app.pid
+-        workspace = window.nodeWorkspace?.name
++        workspace = window.agentInventoryWorkspaceName
+         tabGroupId = window.nearestWindowTabGroup.map(agentTabGroupId)
+         paneId = window.agentPaneId
+         focused = focus.windowOrNil == window
+@@ -124,6 +195,19 @@ struct AgentWindowInfo: Encodable {
+     }
+ }
+ 
++private extension Window {
++    @MainActor
++    var agentInventoryWorkspaceName: String? {
++        if let nodeWorkspace {
++            return nodeWorkspace.name
++        }
++        return switch layoutReason {
++            case .standard: nil
++            case .macos(_, let previousWorkspaceName): previousWorkspaceName
++        }
++    }
++}
++
+ struct AgentTabGroupInfo: Encodable {
+     let tabGroupId: String
+     let paneId: String
+@@ -249,4 +333,3 @@ struct AgentEditTemplate: Encodable {
+     let operations: [String]
+     let layout: AgentLayoutEdit?
+ }
+-
+diff --git a/Sources/AppBundle/command/impl/agent/AgentWorldId.swift b/Sources/AppBundle/command/impl/agent/AgentWorldId.swift
+index ac022e35..4b341add 100644
+--- a/Sources/AppBundle/command/impl/agent/AgentWorldId.swift
++++ b/Sources/AppBundle/command/impl/agent/AgentWorldId.swift
+@@ -8,6 +8,9 @@ func currentAgentWorldId() -> String {
+     for workspace in workspaces {
+         lines += agentWorldLines(for: workspace)
+     }
++    for window in macosMinimizedWindowsContainer.children.filterIsInstance(of: Window.self).sortedBy(\.windowId) {
++        lines.append(agentMinimizedWorldLine(for: window))
++    }
+     return stableAgentHash(lines.joined(separator: "\n"))
+ }
+ 
+@@ -38,6 +41,16 @@ private func agentWorldLine(for window: Window) -> String {
+     ].joined(separator: "|")
+ }
+ 
++@MainActor
++private func agentMinimizedWorldLine(for window: Window) -> String {
++    let origin = switch window.layoutReason {
++        case .standard: "standard"
++        case .macos(let previousParentKind, let previousWorkspaceName):
++            "\(previousParentKind.rawValue):\(previousWorkspaceName ?? "nil")"
++    }
++    return agentWorldLine(for: window) + "|origin:\(origin)"
++}
++
+ @MainActor
+ private func agentWorldLine(for group: TilingContainer) -> String {
+     [
+diff --git a/Sources/AppBundle/config/Config.swift b/Sources/AppBundle/config/Config.swift
+index c2141599..ccb113f3 100644
+--- a/Sources/AppBundle/config/Config.swift
++++ b/Sources/AppBundle/config/Config.swift
+@@ -80,6 +80,7 @@ enum ShortcutsPreset: String, Equatable, Sendable {
+ struct WorkspaceSidebarConfig: ConvenienceCopyable, Equatable, Sendable {
+     var enabled: Bool = false
+     var enableFocus: Bool = false
++    var stayOnTop: Bool = true
+     var autoHide: Bool = false
+     var alwaysExpanded: Bool = false
+     var collapsedWidth: Int = 44
+diff --git a/Sources/AppBundle/config/parseWorkspaceSidebar.swift b/Sources/AppBundle/config/parseWorkspaceSidebar.swift
+index 049ac321..9ce22c3d 100644
+--- a/Sources/AppBundle/config/parseWorkspaceSidebar.swift
++++ b/Sources/AppBundle/config/parseWorkspaceSidebar.swift
+@@ -4,6 +4,7 @@ import TOMLKit
+ private let workspaceSidebarParser: [String: any ParserProtocol<WorkspaceSidebarConfig>] = [
+     "enabled": Parser(\.enabled, parseBool),
+     "enable-focus": Parser(\.enableFocus, parseBool),
++    "stay-on-top": Parser(\.stayOnTop, parseBool),
+     "auto-hide": Parser(\.autoHide, parseBool),
+     "always-expanded": Parser(\.alwaysExpanded, parseBool),
+     "collapsed-width": Parser(\.collapsedWidth, parseWorkspaceSidebarWidth),
+diff --git a/Sources/AppBundle/server.swift b/Sources/AppBundle/server.swift
+index c12de884..872ad113 100644
+--- a/Sources/AppBundle/server.swift
++++ b/Sources/AppBundle/server.swift
+@@ -23,7 +23,7 @@ func toggleReleaseServerIfDebug(_ state: EnableCmdArgs.State) async {
+     let socketFile = "/tmp/\(stableWinMuxAppId)-\(unixUserName).sock"
+     let connection = NWConnection(to: NWEndpoint.unix(path: socketFile), using: .tcp)
+     defer { connection.cancel() }
+-    if await connection.startBlocking().error != nil { // Can't connect, WinMux.app is not running
++    if await connection.initConnection().error != nil { // Can't connect, WinMux.app is not running
+         return
+     }
+ 
+@@ -34,6 +34,21 @@ func toggleReleaseServerIfDebug(_ state: EnableCmdArgs.State) async {
+ 
+ private let serverVersionAndHash = "\(winMuxAppVersion) \(gitHash)"
+ 
++func negotiateSocketProtocolAsServer(_ connection: NWConnection) async -> Bool {
++    let clientVersion: UInt32
++    switch await connection.readUInt32() {
++        case .success(let version): clientVersion = version
++        case .failure: return false
++    }
++
++    // Always tell the peer which version this server supports before rejecting
++    // an incompatible client.
++    if await connection.writeUInt32(SOCKET_PROTOCOL_VERSION).error != nil {
++        return false
++    }
++    return clientVersion == SOCKET_PROTOCOL_VERSION
++}
++
+ private func newConnection(_ connection: NWConnection) async { // todo add exit codes
+     func answerToClient(exitCode: Int32, stdout: String = "", stderr: String = "") async {
+         let ans = ServerAnswer(exitCode: exitCode, stdout: stdout, stderr: stderr, serverVersionAndHash: serverVersionAndHash)
+@@ -42,6 +57,9 @@ private func newConnection(_ connection: NWConnection) async { // todo add exit
+     func answerToClient(_ ans: ServerAnswer) async {
+         _ = await connection.writeAtomic(ans)
+     }
++
++    guard await negotiateSocketProtocolAsServer(connection) else { return }
++
+     while true {
+         let rawRequest: Data
+         switch await connection.readNonAtomic() {
+diff --git a/Sources/AppBundle/tree/WinMuxWorkspaceState.swift b/Sources/AppBundle/tree/WinMuxWorkspaceState.swift
+index 7129fc99..9916bcdc 100644
+--- a/Sources/AppBundle/tree/WinMuxWorkspaceState.swift
++++ b/Sources/AppBundle/tree/WinMuxWorkspaceState.swift
+@@ -32,14 +32,12 @@ struct WinMuxWorkspaceState {
+     var monitorViewportsById: [MonitorViewportId: MonitorViewport] = [:]
+ 
+     private var nextWorkspaceCounter = 1
+-    private var nextProjectCounter = 1
+     private var nextProjectOrderCounter = 1
+ 
+     mutating func resetProjects(defaultProjectName: String) {
+         projectsById = [
+             workspaceProjectDefaultId: WorkspaceProject(id: workspaceProjectDefaultId, name: defaultProjectName, order: 0),
+         ]
+-        nextProjectCounter = 1
+         nextProjectOrderCounter = 1
+         for workspace in workspaceById.values {
+             workspace.projectId = workspaceProjectDefaultId
+@@ -59,7 +57,6 @@ struct WinMuxWorkspaceState {
+             workspaceProjectDefaultId: WorkspaceProject(id: workspaceProjectDefaultId, name: defaultProjectName, order: 0),
+         ]
+         nextWorkspaceCounter = 1
+-        nextProjectCounter = 1
+         nextProjectOrderCounter = 1
+     }
+ 
+@@ -84,12 +81,13 @@ struct WinMuxWorkspaceState {
+         nextProjectOrderCounter = max(nextProjectOrderCounter, project.order + 1)
+     }
+ 
+-    mutating func nextGeneratedProjectIdentity() -> (id: WorkspaceProjectId, name: String) {
+-        while projectsById[WorkspaceProjectId("project-\(nextProjectCounter)")] != nil {
+-            nextProjectCounter += 1
++    func nextGeneratedProjectIdentity() -> (id: WorkspaceProjectId, name: String) {
++        while true {
++            let id = WorkspaceProjectId("project-\(UUID().uuidString.lowercased())")
++            if projectsById[id] == nil {
++                return (id, "Project")
++            }
+         }
+-        defer { nextProjectCounter += 1 }
+-        return (WorkspaceProjectId("project-\(nextProjectCounter)"), "Project \(nextProjectCounter)")
+     }
+ 
+     func workspace(named name: String) -> Workspace? {
+diff --git a/Sources/AppBundle/tree/Workspace.swift b/Sources/AppBundle/tree/Workspace.swift
+index 3b2694d8..1a596eea 100644
+--- a/Sources/AppBundle/tree/Workspace.swift
++++ b/Sources/AppBundle/tree/Workspace.swift
+@@ -18,7 +18,9 @@ enum WorkspaceMutationError: LocalizedError {
+     case projectNotFound(String)
+     case projectCannotBeDeleted(String)
+     case projectCloseBlocked(String, Int)
++    case invalidProjectColor(String)
+     case emptyName
++    case nameContainsControlCharacters
+     case duplicateProjectName(String)
+ 
+     var errorDescription: String? {
+@@ -33,8 +35,12 @@ enum WorkspaceMutationError: LocalizedError {
+                 "Project '\(name)' cannot be deleted."
+             case .projectCloseBlocked(let name, let count):
+                 "Project '\(name)' was not deleted because \(count) window\(count == 1 ? "" : "s") stayed open."
++            case .invalidProjectColor(let color):
++                "Invalid project color '\(color)'. Expected 'auto' or a six-digit hex color such as '#1A2B3C'."
+             case .emptyName:
+                 "Name cannot be empty."
++            case .nameContainsControlCharacters:
++                "Name cannot contain control characters."
+             case .duplicateProjectName(let name):
+                 "A project named '\(name)' already exists."
+         }
+diff --git a/Sources/AppBundle/tree/WorkspaceProjects.swift b/Sources/AppBundle/tree/WorkspaceProjects.swift
+index db18b29e..0f41ceab 100644
+--- a/Sources/AppBundle/tree/WorkspaceProjects.swift
++++ b/Sources/AppBundle/tree/WorkspaceProjects.swift
+@@ -39,6 +39,11 @@ func workspaceProjectName(_ projectId: WorkspaceProjectId) -> String {
+     workspaceProjects().first { $0.id == projectId }?.name ?? "Project"
+ }
+ 
++@MainActor
++func workspaceProject(id rawId: String) -> WorkspaceProject? {
++    workspaceProjects().first { $0.id.rawValue == rawId }
++}
++
+ @MainActor
+ func workspaceProjectDisplayName(_ projectId: WorkspaceProjectId, fallbackName: String) -> String {
+     workspaceProjects().first { $0.id == projectId }?.name ?? fallbackName
+@@ -65,6 +70,44 @@ func createWorkspaceProject() -> WorkspaceProject {
+     return project
+ }
+ 
++@MainActor
++func createWorkspaceProjectForCommand(displayName: String?, colorHex: String?) throws -> WorkspaceProject {
++    materializePersistedWorkspaceProjects()
++    let trimmedName = try displayName.map(normalizedWorkspaceProjectDisplayName)
++    let normalizedColor: String?
++    if let colorHex {
++        guard let normalized = normalizedWorkspaceSidebarColorHex(colorHex) else {
++            throw WorkspaceMutationError.invalidProjectColor(colorHex)
++        }
++        normalizedColor = normalized
++    } else {
++        normalizedColor = nil
++    }
++
++    let identity = winMuxWorkspaceState.nextGeneratedProjectIdentity()
++    let label = trimmedName ?? identity.id.rawValue
++    if !isUnitTest {
++        try persistWorkspaceSidebarProjectMetadata(
++            projectId: identity.id.rawValue,
++            label: label,
++            colorHex: normalizedColor,
++        )
++    }
++
++    let project = WorkspaceProject(
++        id: identity.id,
++        name: identity.name,
++        order: winMuxWorkspaceState.nextProjectOrder(),
++    )
++    winMuxWorkspaceState.registerProject(project)
++    ensureMinimumWorkspace(for: project.id)
++    config.workspaceSidebar.projectLabels[project.id.rawValue] = label
++    if let normalizedColor {
++        config.workspaceSidebar.projectColors[project.id.rawValue] = normalizedColor
++    }
++    return project
++}
++
+ func workspaceProjectOrderPrecedes(_ lhs: WorkspaceProject, _ rhs: WorkspaceProject) -> Bool {
+     if lhs.order != rhs.order {
+         return lhs.order < rhs.order
+@@ -117,6 +160,19 @@ func renameWorkspaceForSidebar(workspaceName: String, displayName: String) throw
+     }
+ }
+ 
++func normalizedWorkspaceProjectDisplayName(_ raw: String) throws -> String {
++    guard !raw.unicodeScalars.contains(where: { scalar in
++        scalar.value <= 0x1F || (0x7F ... 0x9F).contains(scalar.value)
++    }) else {
++        throw WorkspaceMutationError.nameContainsControlCharacters
++    }
++    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
++    guard !trimmed.isEmpty else {
++        throw WorkspaceMutationError.emptyName
++    }
++    return trimmed
++}
++
+ @MainActor
+ func resetWorkspaceSidebarName(workspaceName: String) throws {
+     guard Workspace.existing(byName: workspaceName) != nil else {
+@@ -134,12 +190,38 @@ func renameWorkspaceProject(_ projectId: WorkspaceProjectId, displayName: String
+     guard winMuxWorkspaceState.projectsById[projectId] != nil else {
+         throw WorkspaceMutationError.projectNotFound(projectId.rawValue)
+     }
+-    let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+-    guard !trimmedName.isEmpty else { return }
+-    config.workspaceSidebar.projectLabels[projectId.rawValue] = trimmedName
++    let trimmedName = try normalizedWorkspaceProjectDisplayName(displayName)
+     if !isUnitTest {
+         try persistWorkspaceSidebarProjectLabel(projectId: projectId.rawValue, label: trimmedName)
+     }
++    config.workspaceSidebar.projectLabels[projectId.rawValue] = trimmedName
++}
++
++@MainActor
++@discardableResult
++func setWorkspaceProjectColor(_ projectId: WorkspaceProjectId, colorHex: String?) throws -> String? {
++    materializePersistedWorkspaceProjects()
++    guard winMuxWorkspaceState.projectsById[projectId] != nil else {
++        throw WorkspaceMutationError.projectNotFound(projectId.rawValue)
++    }
++    let normalizedColorHex: String?
++    if let colorHex {
++        guard let normalized = normalizedWorkspaceSidebarColorHex(colorHex) else {
++            throw WorkspaceMutationError.invalidProjectColor(colorHex)
++        }
++        normalizedColorHex = normalized
++    } else {
++        normalizedColorHex = nil
++    }
++    if !isUnitTest {
++        try persistWorkspaceSidebarProjectColor(projectId: projectId.rawValue, colorHex: normalizedColorHex)
++    }
++    if let normalizedColorHex {
++        config.workspaceSidebar.projectColors[projectId.rawValue] = normalizedColorHex
++    } else {
++        config.workspaceSidebar.projectColors.removeValue(forKey: projectId.rawValue)
++    }
++    return normalizedColorHex
+ }
+ 
+ @MainActor
+@@ -177,8 +259,11 @@ func deleteWorkspaceProject(_ projectId: WorkspaceProjectId) throws {
+ }
+ 
+ @MainActor
+-func deleteWorkspaceProjectFromSidebar(_ projectId: WorkspaceProjectId) async throws {
+-    switch config.workspaceSidebar.projectDeletionAction {
++func deleteWorkspaceProject(
++    _ projectId: WorkspaceProjectId,
++    action: WorkspaceProjectDeletionAction,
++) async throws {
++    switch action {
+         case .closeWindows:
+             try await closeWindowsAndDeleteWorkspaceProject(projectId)
+         case .moveWindowsToFallback:
+@@ -186,6 +271,11 @@ func deleteWorkspaceProjectFromSidebar(_ projectId: WorkspaceProjectId) async th
+     }
+ }
+ 
++@MainActor
++func deleteWorkspaceProjectFromSidebar(_ projectId: WorkspaceProjectId) async throws {
++    try await deleteWorkspaceProject(projectId, action: config.workspaceSidebar.projectDeletionAction)
++}
++
+ @MainActor
+ private func deleteWorkspaceProjectMovingWindowsToFallback(_ projectId: WorkspaceProjectId) throws {
+     materializePersistedWorkspaceProjects()
+@@ -196,6 +286,9 @@ private func deleteWorkspaceProjectMovingWindowsToFallback(_ projectId: Workspac
+         throw WorkspaceMutationError.projectCannotBeDeleted(project.name)
+     }
+ 
++    try persistWorkspaceSidebarProjectMetadataRemoval(projectId)
++    removeWorkspaceSidebarProjectMetadataFromMemory(projectId)
++
+     let fallbackId = workspaceProjectFallbackForDeletion(excluding: projectId)
+     let viewportsShowingDeletedProject = winMuxWorkspaceState.monitorViewportsById.values.compactMap { viewport -> MonitorViewportId? in
+         guard let activeWorkspaceId = viewport.activeWorkspaceId,
+@@ -218,7 +311,6 @@ private func deleteWorkspaceProjectMovingWindowsToFallback(_ projectId: Workspac
+     }
+ 
+     winMuxWorkspaceState.projectsById.removeValue(forKey: projectId)
+-    try clearWorkspaceSidebarProjectMetadata(projectId)
+     ensureVisibleActiveProjectWorkspaces()
+     checkWorkspaceHierarchyInvariants()
+ }
+@@ -264,16 +356,24 @@ private func closeWindowsAndDeleteWorkspaceProject(_ projectId: WorkspaceProject
+ 
+ @MainActor
+ private func clearWorkspaceSidebarProjectMetadata(_ projectId: WorkspaceProjectId) throws {
+-    let rawProjectId = projectId.rawValue
+-    let hadLabel = config.workspaceSidebar.projectLabels.removeValue(forKey: rawProjectId) != nil
+-    let hadColor = config.workspaceSidebar.projectColors.removeValue(forKey: rawProjectId) != nil
++    try persistWorkspaceSidebarProjectMetadataRemoval(projectId)
++    removeWorkspaceSidebarProjectMetadataFromMemory(projectId)
++}
++
++@MainActor
++private func persistWorkspaceSidebarProjectMetadataRemoval(_ projectId: WorkspaceProjectId) throws {
+     guard !isUnitTest else { return }
+-    if hadLabel {
+-        try persistWorkspaceSidebarProjectLabel(projectId: rawProjectId, label: nil)
+-    }
+-    if hadColor {
+-        try persistWorkspaceSidebarProjectColor(projectId: rawProjectId, colorHex: nil)
+-    }
++    try persistWorkspaceSidebarProjectMetadata(
++        projectId: projectId.rawValue,
++        label: nil,
++        colorHex: nil,
++    )
++}
++
++@MainActor
++private func removeWorkspaceSidebarProjectMetadataFromMemory(_ projectId: WorkspaceProjectId) {
++    config.workspaceSidebar.projectLabels.removeValue(forKey: projectId.rawValue)
++    config.workspaceSidebar.projectColors.removeValue(forKey: projectId.rawValue)
+ }
+ 
+ @MainActor
+diff --git a/Sources/AppBundle/ui/core/WinMuxPanelLayer.swift b/Sources/AppBundle/ui/core/WinMuxPanelLayer.swift
+index 8296c060..b6a5033c 100644
+--- a/Sources/AppBundle/ui/core/WinMuxPanelLayer.swift
++++ b/Sources/AppBundle/ui/core/WinMuxPanelLayer.swift
+@@ -27,4 +27,12 @@ extension NSPanelHud {
+     func applyWinMuxLayer(_ layer: WinMuxPanelLayer) {
+         level = layer.level
+     }
++
++    func applyWorkspaceSidebarLayer(stayOnTop: Bool) {
++        level = workspaceSidebarPanelLevel(stayOnTop: stayOnTop)
++    }
++}
++
++func workspaceSidebarPanelLevel(stayOnTop: Bool) -> NSWindow.Level {
++    stayOnTop ? WinMuxPanelLayer.workspaceSidebar.level : .floating
+ }
+diff --git a/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift b/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift
+index 4ad8746c..0829b37a 100644
+--- a/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift
++++ b/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift
+@@ -52,7 +52,6 @@ struct ShortcutBehaviorSettingsView: View {
+                 }
+             }
+         }
+-        .id(model.settingsRevision)
+     }
+ 
+     private func persistRootBool(_ key: String, _ value: Bool) { persistConfig(section: nil, key: key, value: value ? "true" : "false") }
+@@ -66,6 +65,7 @@ struct ShortcutAppearanceSettingsView: View {
+     @ObservedObject var model: ShortcutSettingsModel
+     @State private var sidebarEnabled = config.workspaceSidebar.enabled
+     @State private var sidebarFocusEnabled = config.workspaceSidebar.enableFocus
++    @State private var sidebarStayOnTop = config.workspaceSidebar.stayOnTop
+     @State private var sidebarAutoHide = config.workspaceSidebar.autoHide
+     @State private var sidebarAlwaysExpanded = config.workspaceSidebar.alwaysExpanded
+     @State private var showStatusPills = config.workspaceSidebar.showStatusPills
+@@ -108,6 +108,7 @@ struct ShortcutAppearanceSettingsView: View {
+             SettingsSection("Sidebar") {
+                 SettingsToggle("Show sidebar", isOn: $sidebarEnabled, help: "Show the workspace rail on configured displays.") { sidebarBool("enabled", sidebarEnabled) }
+                 SettingsToggle("Focus sidebar monitor only", isOn: $sidebarFocusEnabled, help: "Show the sidebar only on the focused monitor when monitor scope allows it.") { sidebarBool("enable-focus", sidebarFocusEnabled) }
++                SettingsToggle("Keep sidebar above Dock", isOn: $sidebarStayOnTop, help: "Keep the sidebar above the Dock. Turn this off to let the Dock appear over it.") { sidebarBool("stay-on-top", sidebarStayOnTop) }
+                 SettingsToggle("Reveal sidebar at the display edge", isOn: $sidebarAutoHide, help: "Hide the compact rail until the pointer reaches the left edge.") { sidebarBool("auto-hide", sidebarAutoHide) }
+                 SettingsToggle("Keep sidebar expanded", isOn: $sidebarAlwaysExpanded, help: "Reserve the full sidebar width for tiled windows.") { sidebarBool("always-expanded", sidebarAlwaysExpanded) }
+                 SettingsStepper("Expanded width", value: $sidebarWidth, range: 120...480, help: "Width of the fully expanded sidebar.") { sidebarInt("width", sidebarWidth) }
+@@ -139,7 +140,6 @@ struct ShortcutAppearanceSettingsView: View {
+                 SettingsStepper("Outer bottom", value: $outerBottomGap, range: 0...120, help: "Inset at the bottom display edge.") { persist("gaps", "outer.bottom", "\(outerBottomGap)") }
+             }
+         }
+-        .id(model.settingsRevision)
+     }
+ 
+     private func sidebarBool(_ key: String, _ value: Bool) { persist("workspace-sidebar", key, value ? "true" : "false") }
+@@ -187,7 +187,7 @@ struct ShortcutAutomationSettingsView: View {
+             }
+         }
+         .task { loadCommands() }
+-        .id(model.settingsRevision)
++        .onChange(of: model.settingsRevision) { _ in loadCommands() }
+     }
+ 
+     private func loadCommands() {
+diff --git a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarActions.swift b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarActions.swift
+index 9a200d18..a9e643e5 100644
+--- a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarActions.swift
++++ b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarActions.swift
+@@ -475,15 +475,7 @@ func renameWorkspaceSidebarProject(_ projectId: WorkspaceProjectId, displayName:
+ @MainActor
+ func setWorkspaceSidebarProjectColor(_ project: WorkspaceSidebarProjectViewModel, colorHex: String?) {
+     runWorkspaceSidebarSession {
+-        let normalizedColorHex = colorHex.flatMap(normalizedWorkspaceSidebarColorHex)
+-        if let normalizedColorHex {
+-            config.workspaceSidebar.projectColors[project.id.rawValue] = normalizedColorHex
+-        } else {
+-            config.workspaceSidebar.projectColors.removeValue(forKey: project.id.rawValue)
+-        }
+-        if !isUnitTest {
+-            try persistWorkspaceSidebarProjectColor(projectId: project.id.rawValue, colorHex: normalizedColorHex)
+-        }
++        try setWorkspaceProjectColor(project.id, colorHex: colorHex)
+         await updateWorkspaceSidebarModel()
+     }
+ }
+diff --git a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarConfigEdits.swift b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarConfigEdits.swift
+index 6a9c4a0b..f428afe7 100644
+--- a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarConfigEdits.swift
++++ b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarConfigEdits.swift
+@@ -65,9 +65,12 @@ private func updateWorkspaceSidebarScalarConfig(
+ }
+ 
+ @MainActor
+-func persistWorkspaceSidebarMenuBarReserveHeight(_ height: Int) throws -> URL {
+-    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+-    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? starterConfigText()
++func persistWorkspaceSidebarMenuBarReserveHeight(_ height: Int, targetUrl explicitTargetUrl: URL? = nil) throws -> URL {
++    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
++    let currentText = try readWorkspaceSidebarConfig(
++        at: targetUrl,
++        contentsWhenMissing: starterConfigText(),
++    )
+     let updatedText = updateWorkspaceSidebarMenuBarReserveConfig(in: currentText, height: height)
+     if let parent = targetUrl.deletingLastPathComponent().takeIf({ $0.path != targetUrl.path }) {
+         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+@@ -77,9 +80,15 @@ func persistWorkspaceSidebarMenuBarReserveHeight(_ height: Int) throws -> URL {
+ }
+ 
+ @MainActor
+-func persistWorkspaceSidebarProjectDeletionAction(_ action: WorkspaceProjectDeletionAction) throws -> URL {
+-    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+-    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? starterConfigText()
++func persistWorkspaceSidebarProjectDeletionAction(
++    _ action: WorkspaceProjectDeletionAction,
++    targetUrl explicitTargetUrl: URL? = nil,
++) throws -> URL {
++    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
++    let currentText = try readWorkspaceSidebarConfig(
++        at: targetUrl,
++        contentsWhenMissing: starterConfigText(),
++    )
+     let updatedText = updateWorkspaceSidebarProjectDeletionActionConfig(in: currentText, action: action)
+     if let parent = targetUrl.deletingLastPathComponent().takeIf({ $0.path != targetUrl.path }) {
+         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+@@ -187,9 +196,13 @@ private func updateWorkspaceSidebarKeyValueSectionConfig(
+ }
+ 
+ @MainActor
+-func persistWorkspaceSidebarLabel(workspaceName: String, label: String?) throws {
+-    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+-    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? ""
++func persistWorkspaceSidebarLabel(
++    workspaceName: String,
++    label: String?,
++    targetUrl explicitTargetUrl: URL? = nil,
++) throws {
++    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
++    let currentText = try readWorkspaceSidebarConfig(at: targetUrl, contentsWhenMissing: "")
+     let updatedText = updateWorkspaceSidebarLabelConfig(
+         in: currentText,
+         workspaceName: workspaceName,
+@@ -202,9 +215,13 @@ func persistWorkspaceSidebarLabel(workspaceName: String, label: String?) throws
+ }
+ 
+ @MainActor
+-func persistWorkspaceSidebarProjectLabel(projectId: String, label: String?) throws {
+-    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+-    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? ""
++func persistWorkspaceSidebarProjectLabel(
++    projectId: String,
++    label: String?,
++    targetUrl explicitTargetUrl: URL? = nil,
++) throws {
++    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
++    let currentText = try readWorkspaceSidebarConfig(at: targetUrl, contentsWhenMissing: "")
+     let updatedText = updateWorkspaceSidebarProjectLabelConfig(
+         in: currentText,
+         projectId: projectId,
+@@ -217,9 +234,13 @@ func persistWorkspaceSidebarProjectLabel(projectId: String, label: String?) thro
+ }
+ 
+ @MainActor
+-func persistWorkspaceSidebarProjectColor(projectId: String, colorHex: String?) throws {
+-    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+-    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? ""
++func persistWorkspaceSidebarProjectColor(
++    projectId: String,
++    colorHex: String?,
++    targetUrl explicitTargetUrl: URL? = nil,
++) throws {
++    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
++    let currentText = try readWorkspaceSidebarConfig(at: targetUrl, contentsWhenMissing: "")
+     let updatedText = updateWorkspaceSidebarProjectColorConfig(
+         in: currentText,
+         projectId: projectId,
+@@ -231,11 +252,50 @@ func persistWorkspaceSidebarProjectColor(projectId: String, colorHex: String?) t
+     try updatedText.write(to: targetUrl, atomically: true, encoding: .utf8)
+ }
+ 
++@MainActor
++func persistWorkspaceSidebarProjectMetadata(
++    projectId: String,
++    label: String?,
++    colorHex: String?,
++    targetUrl explicitTargetUrl: URL? = nil,
++) throws {
++    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
++    let currentText = try readWorkspaceSidebarConfig(at: targetUrl, contentsWhenMissing: "")
++    let textWithLabel = updateWorkspaceSidebarProjectLabelConfig(
++        in: currentText,
++        projectId: projectId,
++        label: label,
++    )
++    let updatedText = updateWorkspaceSidebarProjectColorConfig(
++        in: textWithLabel,
++        projectId: projectId,
++        colorHex: colorHex,
++    )
++    if let parent = targetUrl.deletingLastPathComponent().takeIf({ $0.path != targetUrl.path }) {
++        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
++    }
++    try updatedText.write(to: targetUrl, atomically: true, encoding: .utf8)
++}
++
+ @MainActor
+ private func preferredWorkspaceSidebarConfigUrl() -> URL {
+     preferredEditableConfigUrl()
+ }
+ 
++private func readWorkspaceSidebarConfig(at targetUrl: URL, contentsWhenMissing: @autoclosure () -> String) throws -> String {
++    do {
++        return try String(contentsOf: targetUrl, encoding: .utf8)
++    } catch {
++        let cocoaError = error as NSError
++        guard cocoaError.domain == NSCocoaErrorDomain,
++              cocoaError.code == NSFileReadNoSuchFileError
++        else {
++            throw error
++        }
++        return contentsWhenMissing()
++    }
++}
++
+ private func workspaceSidebarLabelKey(in line: String) -> String? {
+     workspaceSidebarConfigKey(in: line)
+ }
+@@ -260,8 +320,20 @@ private func tomlWorkspaceSidebarKeyValueLine(key: String, value: String) -> Str
+     "\"\(tomlEscape(key))\" = \"\(tomlEscape(value))\""
+ }
+ 
+-private func tomlEscape(_ raw: String) -> String {
+-    raw
+-        .replacingOccurrences(of: "\\", with: "\\\\")
+-        .replacingOccurrences(of: "\"", with: "\\\"")
++func tomlEscape(_ raw: String) -> String {
++    raw.unicodeScalars.map { scalar in
++        switch scalar.value {
++            case 0x08: "\\b"
++            case 0x09: "\\t"
++            case 0x0A: "\\n"
++            case 0x0C: "\\f"
++            case 0x0D: "\\r"
++            case 0x22: "\\\""
++            case 0x5C: "\\\\"
++            case 0x00 ... 0x1F, 0x7F ... 0x9F:
++                String(format: "\\u%04X", scalar.value)
++            default:
++                String(scalar)
++        }
++    }.joined()
+ }
+diff --git a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanel.swift b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanel.swift
+index 4435af74..802578a8 100644
+--- a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanel.swift
++++ b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanel.swift
+@@ -928,6 +928,7 @@ extension WorkspaceSidebarPanel {
+     }
+ 
+     func refresh(on monitor: Monitor) {
++        applyWorkspaceSidebarLayer(stayOnTop: config.workspaceSidebar.stayOnTop)
+         guard let layout = currentSidebarPanelLayout(on: monitor) else {
+             cancelExpansionWork()
+             resetHiddenSidebarState()
+diff --git a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanelController.swift b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanelController.swift
+index d63b2324..d284ccdf 100644
+--- a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanelController.swift
++++ b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanelController.swift
+@@ -67,7 +67,7 @@ final class WorkspaceSidebarPanel: NSPanelHud {
+         isExcludedFromWindowsMenu = true
+         animationBehavior = .none
+         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+-        applyWinMuxLayer(.workspaceSidebar)
++        applyWorkspaceSidebarLayer(stayOnTop: config.workspaceSidebar.stayOnTop)
+         contentView = hostingView
+         hostingView.frame = contentView?.bounds ?? .zero
+         hostingView.autoresizingMask = [.width, .height]
+diff --git a/Sources/AppBundleTests/command/AgentCommandTest.swift b/Sources/AppBundleTests/command/AgentCommandTest.swift
+index e0e3ca12..9bf97c61 100644
+--- a/Sources/AppBundleTests/command/AgentCommandTest.swift
++++ b/Sources/AppBundleTests/command/AgentCommandTest.swift
+@@ -9,8 +9,119 @@ final class AgentCommandTest: XCTestCase {
+     func testParse() {
+         XCTAssertTrue(parseCommand("agent query").cmdOrNil is AgentCommand)
+         XCTAssertTrue(parseCommand("agent query --path /tmp/winmux-agent.json").cmdOrNil is AgentCommand)
+-        XCTAssertEqual(parseCommand("agent apply").errorOrNil, "--path is mandatory for 'check' and 'apply'")
++        XCTAssertTrue(parseCommand("agent check --stdin").cmdOrNil is AgentCommand)
++        XCTAssertTrue(parseCommand("agent apply --stdin").cmdOrNil is AgentCommand)
++        XCTAssertEqual(parseCommand("agent apply").errorOrNil, "--path or --stdin is mandatory for 'check' and 'apply'")
++        XCTAssertEqual(
++            parseCommand("agent apply --path /tmp/winmux-agent.json --stdin").errorOrNil,
++            "ERROR: Conflicting options: --path, --stdin",
++        )
++        XCTAssertEqual(parseCommand("agent query --stdin").errorOrNil, "--stdin is incompatible with 'query' and 'skill'")
+         XCTAssertEqual(parseCommand("agent skill --path /tmp/winmux-agent.json").errorOrNil, "--path is incompatible with 'skill'")
++        XCTAssertEqual(parseCommand("agent skill --stdin").errorOrNil, "--stdin is incompatible with 'query' and 'skill'")
++    }
++
++    func testCheckReadsAgentJsonFromStdin() async throws {
++        let result = try await parseCommand("agent check --stdin").cmdOrDie.run(
++            .defaultEnv,
++            CmdStdin(try freshAgentJson("""
++                {
++                  "schemaVersion": 1,
++                  "edit": { "operations": [] }
++                }
++                """)),
++        )
++
++        XCTAssertEqual(result.exitCode, 0)
++        XCTAssertEqual(result.stdout, ["OK"])
++        XCTAssertTrue(result.stderr.isEmpty)
++    }
++
++    func testApplyReadsAgentJsonFromStdin() async throws {
++        let source = Workspace.get(byName: "a")
++        let window = TestWindow.new(id: 1, parent: source.rootTilingContainer)
++
++        let result = try await parseCommand("agent apply --stdin").cmdOrDie.run(
++            .defaultEnv,
++            CmdStdin(try freshAgentJson("""
++                {
++                  "schemaVersion": 1,
++                  "edit": {
++                    "operations": [
++                      { "type": "moveWindowToWorkspace", "windowId": 1, "workspace": "b" }
++                    ]
++                  }
++                }
++                """)),
++        )
++
++        XCTAssertEqual(result.exitCode, 0)
++        XCTAssertTrue(result.stdout.isEmpty)
++        XCTAssertTrue(result.stderr.isEmpty)
++        XCTAssertTrue(window.nodeWorkspace === Workspace.get(byName: "b"))
++    }
++
++    func testCheckRejectsMalformedAgentJsonFromStdin() async throws {
++        let result = try await parseCommand("agent check --stdin").cmdOrDie.run(
++            .defaultEnv,
++            CmdStdin("not json"),
++        )
++
++        XCTAssertEqual(result.exitCode, 1)
++        XCTAssertTrue(result.stdout.isEmpty)
++        XCTAssertTrue(result.stderr.joined(separator: "\n").contains("Failed to read agent JSON"))
++    }
++
++    func testApplyRejectsMissingWorldIdBeforeMutation() async throws {
++        let source = Workspace.get(byName: "a")
++        let window = TestWindow.new(id: 1, parent: source.rootTilingContainer)
++        let result = try await parseCommand("agent apply --stdin").cmdOrDie.run(
++            .defaultEnv,
++            CmdStdin("""
++                {
++                  "schemaVersion": 1,
++                  "edit": {
++                    "operations": [
++                      { "type": "moveWindowToWorkspace", "windowId": 1, "workspace": "b" }
++                    ]
++                  }
++                }
++                """),
++        )
++
++        XCTAssertEqual(result.exitCode, 1)
++        XCTAssertTrue(result.stderr.joined(separator: "\n").contains("missing worldId"))
++        XCTAssertTrue(window.nodeWorkspace === source)
++    }
++
++    func testCheckRejectsMissingSchemaVersion() async throws {
++        let result = try await parseCommand("agent check --stdin").cmdOrDie.run(
++            .defaultEnv,
++            CmdStdin("""
++                {
++                  "worldId": "\(currentAgentWorldId())",
++                  "edit": { "operations": [] }
++                }
++                """),
++        )
++
++        XCTAssertEqual(result.exitCode, 1)
++        XCTAssertTrue(result.stderr.joined(separator: "\n").contains("missing schemaVersion"))
++    }
++
++    func testCheckRejectsUnsupportedSchemaVersion() async throws {
++        let result = try await parseCommand("agent check --stdin").cmdOrDie.run(
++            .defaultEnv,
++            CmdStdin(try freshAgentJson("""
++                {
++                  "schemaVersion": 2,
++                  "edit": { "operations": [] }
++                }
++                """)),
++        )
++
++        XCTAssertEqual(result.exitCode, 1)
++        XCTAssertTrue(result.stderr.joined(separator: "\n").contains("Unsupported agent schemaVersion '2'"))
+     }
+ 
+     func testSkill() async throws {
+@@ -29,6 +140,7 @@ final class AgentCommandTest: XCTestCase {
+         XCTAssertTrue(result.stdout.joined(separator: "\n").contains("\"axis\": \"vertical\""))
+         XCTAssertTrue(result.stdout.joined(separator: "\n").contains("replace the entire `edit.operations` array"))
+         XCTAssertTrue(result.stdout.joined(separator: "\n").contains("`windows` is accepted as an alias"))
++        XCTAssertTrue(result.stdout.joined(separator: "\n").contains("winmux agent apply --stdin"))
+     }
+ 
+     func testQueryIncludesPanesAndTabGroups() async throws {
+@@ -51,6 +163,92 @@ final class AgentCommandTest: XCTestCase {
+         XCTAssertTrue(out.contains("\"worldId\" : "))
+     }
+ 
++    func testQueryIncludesMinimizedWindows() async throws {
++        let workspace = Workspace.get(byName: "a")
++        let window = TestWindow.new(id: 42, parent: macosMinimizedWindowsContainer)
++        window.layoutReason = .macos(prevParentKind: .tilingContainer, prevWorkspaceName: workspace.name)
++
++        let result = try await parseCommand("agent query").cmdOrDie.run(.defaultEnv, .emptyStdin)
++        let data = try XCTUnwrap(result.stdout.joined(separator: "\n").data(using: .utf8))
++        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
++        let inventory = try XCTUnwrap(json["inventory"] as? [String: Any])
++        let windows = try XCTUnwrap(inventory["windows"] as? [[String: Any]])
++        let minimized = try XCTUnwrap(windows.first { ($0["windowId"] as? NSNumber)?.uint32Value == 42 })
++
++        XCTAssertEqual(minimized["layout"] as? String, "macos_native_minimized")
++        XCTAssertEqual(minimized["workspace"] as? String, workspace.name)
++    }
++
++    func testQueryRetriesMembershipChangeWithoutDuplicateWindows() async throws {
++        let workspace = Workspace.get(byName: "a")
++        let window = TestWindow.new(id: 42, parent: workspace.rootTilingContainer)
++        var captureCount = 0
++        setAgentSnapshotAfterMembershipCaptureForTests { attempt in
++            captureCount = attempt
++            if attempt == 1 {
++                window.layoutReason = .macos(prevParentKind: .tilingContainer, prevWorkspaceName: workspace.name)
++                window.bind(to: macosMinimizedWindowsContainer, adaptiveWeight: 1, index: INDEX_BIND_LAST)
++            }
++        }
++        defer { setAgentSnapshotAfterMembershipCaptureForTests(nil) }
++
++        let snapshot = try await AgentSnapshot.query()
++        let windowIds = snapshot.inventory.windows.map(\.windowId)
++
++        XCTAssertEqual(captureCount, 2)
++        XCTAssertEqual(windowIds.filter { $0 == window.windowId }.count, 1)
++        XCTAssertEqual(windowIds.count, Set(windowIds).count)
++        XCTAssertEqual(snapshot.worldId, currentAgentWorldId())
++    }
++
++    func testQueryReportsRetryableErrorWhenWorldKeepsChanging() async throws {
++        let workspace = Workspace.get(byName: "a")
++        let window = TestWindow.new(id: 42, parent: workspace.rootTilingContainer)
++        var captureCount = 0
++        setAgentSnapshotAfterMembershipCaptureForTests { attempt in
++            captureCount = attempt
++            if window.parent === macosMinimizedWindowsContainer {
++                window.layoutReason = .standard
++                window.bind(to: workspace.rootTilingContainer, adaptiveWeight: 1, index: INDEX_BIND_LAST)
++            } else {
++                window.layoutReason = .macos(prevParentKind: .tilingContainer, prevWorkspaceName: workspace.name)
++                window.bind(to: macosMinimizedWindowsContainer, adaptiveWeight: 1, index: INDEX_BIND_LAST)
++            }
++        }
++        defer { setAgentSnapshotAfterMembershipCaptureForTests(nil) }
++
++        let result = try await parseCommand("agent query").cmdOrDie.run(.defaultEnv, .emptyStdin)
++
++        XCTAssertEqual(captureCount, agentSnapshotQueryMaxAttempts)
++        XCTAssertEqual(result.exitCode, 1)
++        XCTAssertTrue(result.stderr.joined(separator: "\n").contains("Window state kept changing"))
++        XCTAssertTrue(result.stderr.joined(separator: "\n").contains("Retry 'winmux agent query'"))
++    }
++
++    func testWorldIdTracksMinimizedWindows() {
++        let initialWorldId = currentAgentWorldId()
++        let window = TestWindow.new(id: 42, parent: macosMinimizedWindowsContainer)
++        window.layoutReason = .macos(prevParentKind: .tilingContainer, prevWorkspaceName: focus.workspace.name)
++
++        let withMinimizedWindow = currentAgentWorldId()
++        window.unbindFromParent()
++
++        XCTAssertNotEqual(withMinimizedWindow, initialWorldId)
++        XCTAssertEqual(currentAgentWorldId(), initialWorldId)
++    }
++
++    func testWorldIdTracksMinimizedWindowOrigin() {
++        let window = TestWindow.new(id: 42, parent: macosMinimizedWindowsContainer)
++        window.layoutReason = .macos(prevParentKind: .tilingContainer, prevWorkspaceName: "a")
++        let firstOriginWorldId = currentAgentWorldId()
++
++        window.layoutReason = .macos(prevParentKind: .workspace, prevWorkspaceName: "b")
++        let secondOriginWorldId = currentAgentWorldId()
++        window.unbindFromParent()
++
++        XCTAssertNotEqual(secondOriginWorldId, firstOriginWorldId)
++    }
++
+     func testCheckRejectsStaleWorldId() async throws {
+         let path = try writeAgentJson("""
+             {
+@@ -296,10 +494,25 @@ final class AgentCommandTest: XCTestCase {
+ }
+ 
+ 
++@MainActor
++func freshAgentJson(_ json: String) throws -> String {
++    let data = try XCTUnwrap(json.data(using: .utf8))
++    var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
++    if object["schemaVersion"] == nil {
++        object["schemaVersion"] = supportedAgentSchemaVersion
++    }
++    if object["worldId"] == nil {
++        object["worldId"] = currentAgentWorldId()
++    }
++    let result = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
++    return try XCTUnwrap(String(data: result, encoding: .utf8))
++}
++
++@MainActor
+ func writeAgentJson(_ json: String) throws -> URL {
+     let url = URL(filePath: NSTemporaryDirectory())
+         .appending(path: "winmux-agent-\(UUID().uuidString).json")
+-    try json.write(to: url, atomically: true, encoding: .utf8)
++    try freshAgentJson(json).write(to: url, atomically: true, encoding: .utf8)
+     return url
+ }
+ 
+diff --git a/Sources/AppBundleTests/command/ListWindowsTest.swift b/Sources/AppBundleTests/command/ListWindowsTest.swift
+index 999af5dd..17ab4c6b 100644
+--- a/Sources/AppBundleTests/command/ListWindowsTest.swift
++++ b/Sources/AppBundleTests/command/ListWindowsTest.swift
+@@ -42,6 +42,8 @@ final class ListWindowsTest: XCTestCase {
+                     assertTrue(FormatVar.AppFormatVar.allCases.allSatisfy { $0.rawValue.starts(with: "app-") })
+                 case .workspace:
+                     assertTrue(FormatVar.WorkspaceFormatVar.allCases.allSatisfy { $0.rawValue.starts(with: "workspace") })
++                case .project:
++                    assertTrue(FormatVar.ProjectFormatVar.allCases.allSatisfy { $0.rawValue.starts(with: "project-") })
+                 case .monitor:
+                     assertTrue(FormatVar.MonitorFormatVar.allCases.allSatisfy { $0.rawValue.starts(with: "monitor-") })
+             }
+diff --git a/Sources/AppBundleTests/command/MoveNodeToWorkspaceCommandTest.swift b/Sources/AppBundleTests/command/MoveNodeToWorkspaceCommandTest.swift
+index efc83956..95ee990c 100644
+--- a/Sources/AppBundleTests/command/MoveNodeToWorkspaceCommandTest.swift
++++ b/Sources/AppBundleTests/command/MoveNodeToWorkspaceCommandTest.swift
+@@ -7,6 +7,7 @@ final class MoveNodeToWorkspaceCommandTest: XCTestCase {
+     override func setUp() async throws { setUpWorkspacesForTests() }
+ 
+     func testParse() {
++        testParseCommandSucc("move-node-to-workspace new", MoveNodeToWorkspaceCmdArgs(target: .newWorkspace))
+         testParseCommandSucc("move-node-to-workspace next", MoveNodeToWorkspaceCmdArgs(target: .relative(.next)))
+         assertEquals(parseCommand("move-node-to-workspace --fail-if-noop next").errorOrNil, "--fail-if-noop is incompatible with (next|prev)")
+         assertEquals(parseCommand("move-node-to-workspace --stdin foo").errorOrNil, "--stdin and --no-stdin require using (next|prev) argument")
+@@ -14,6 +15,31 @@ final class MoveNodeToWorkspaceCommandTest: XCTestCase {
+         testParseCommandSucc("move-node-to-workspace --no-stdin next", MoveNodeToWorkspaceCmdArgs(target: .relative(.next)).copy(\.explicitStdinFlag, false))
+     }
+ 
++    func testNewTargetMovesToFreshWorkspaceAndFollowsWindow() async throws {
++        let sourceWorkspace = focus.workspace
++        let sourceWindow = TestWindow.new(id: 41, parent: sourceWorkspace.rootTilingContainer)
++        _ = sourceWindow.focusWindow()
++
++        let existingWorkspace = createBlankWorkspace(
++            projectId: sourceWorkspace.projectId,
++            monitor: sourceWorkspace.workspaceMonitor,
++        )
++        _ = TestWindow.new(id: 42, parent: existingWorkspace.rootTilingContainer)
++        _ = sourceWindow.focusWindow()
++
++        let args = MoveNodeToWorkspaceCmdArgs(target: .newWorkspace)
++            .copy(\.focusFollowsWindow, true)
++        let result = try await MoveNodeToWorkspaceCommand(args: args).run(.defaultEnv, .emptyStdin)
++
++        let targetWorkspace = try XCTUnwrap(sourceWindow.nodeWorkspace)
++        assertEquals(result.exitCode, 0)
++        XCTAssertNotEqual(targetWorkspace, sourceWorkspace)
++        XCTAssertNotEqual(targetWorkspace, existingWorkspace)
++        XCTAssertEqual(targetWorkspace.projectId, sourceWorkspace.projectId)
++        XCTAssertTrue(targetWorkspace.usesAutomaticDisplayName)
++        XCTAssertEqual(focus.windowOrNil, sourceWindow)
++    }
++
+     func testSimple() async throws {
+         let workspaceA = Workspace.get(byName: "a")
+         workspaceA.rootTilingContainer.apply {
+diff --git a/Sources/AppBundleTests/config/ConfigTestConfigEdits.swift b/Sources/AppBundleTests/config/ConfigTestConfigEdits.swift
+index 369b9b6a..0b86c1a1 100644
+--- a/Sources/AppBundleTests/config/ConfigTestConfigEdits.swift
++++ b/Sources/AppBundleTests/config/ConfigTestConfigEdits.swift
+@@ -156,4 +156,128 @@ extension ConfigTest {
+         XCTAssertFalse(updated.contains("move-windows-to-fallback"))
+     }
+ 
++    func testUpdateSettingsScalarConfigReplacesWorkspaceSidebarStayOnTop() {
++        let updated = updateSettingsScalarConfig(
++            in: """
++            [workspace-sidebar]
++                enabled = true
++                stay-on-top = true
++
++            [mode.main.binding]
++                alt-h = 'focus left'
++            """,
++            section: "workspace-sidebar",
++            key: "stay-on-top",
++            renderedValue: "false",
++        )
++
++        XCTAssertTrue(updated.contains("stay-on-top = false"))
++        XCTAssertFalse(updated.contains("stay-on-top = true"))
++        XCTAssertTrue(updated.contains("[mode.main.binding]"))
++    }
++
++    func testPersistProjectMetadataCreatesOnlyAtExplicitMissingTarget() throws {
++        let tempDir = FileManager.default.temporaryDirectory
++            .appending(path: "WinMuxProjectPersistenceTests-\(UUID().uuidString)", directoryHint: .isDirectory)
++        defer { try? FileManager.default.removeItem(at: tempDir) }
++        let targetUrl = tempDir.appending(path: "nested/winmux.toml")
++
++        try persistWorkspaceSidebarProjectMetadata(
++            projectId: "project-test",
++            label: "Research",
++            colorHex: "#60A5FA",
++            targetUrl: targetUrl,
++        )
++
++        let persisted = try String(contentsOf: targetUrl, encoding: .utf8)
++        let (parsed, errors) = parseConfig(persisted)
++        XCTAssertEqual(errors.descriptions, [])
++        XCTAssertEqual(parsed.workspaceSidebar.projectLabels["project-test"], "Research")
++        XCTAssertEqual(parsed.workspaceSidebar.projectColors["project-test"], "#60A5FA")
++    }
++
++    func testPersistProjectMetadataDoesNotReplaceInvalidUtf8() throws {
++        let tempDir = FileManager.default.temporaryDirectory
++            .appending(path: "WinMuxProjectPersistenceTests-\(UUID().uuidString)", directoryHint: .isDirectory)
++        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
++        defer { try? FileManager.default.removeItem(at: tempDir) }
++        let targetUrl = tempDir.appending(path: "winmux.toml")
++        let invalidUtf8 = Data([0xC3, 0x28])
++        try invalidUtf8.write(to: targetUrl)
++
++        XCTAssertThrowsError(
++            try persistWorkspaceSidebarProjectMetadata(
++                projectId: "project-test",
++                label: "Must Not Be Written",
++                colorHex: nil,
++                targetUrl: targetUrl,
++            ),
++        )
++        XCTAssertEqual(try Data(contentsOf: targetUrl), invalidUtf8)
++    }
++
++    func testPersistProjectMetadataRemovesLabelAndColorTogetherAndPreservesOtherConfig() throws {
++        let tempDir = FileManager.default.temporaryDirectory
++            .appending(path: "WinMuxProjectPersistenceTests-\(UUID().uuidString)", directoryHint: .isDirectory)
++        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
++        defer { try? FileManager.default.removeItem(at: tempDir) }
++        let targetUrl = tempDir.appending(path: "winmux.toml")
++        let original = """
++            config-version = 2
++
++            [workspace-sidebar.project-labels]
++            "project-test" = "Disposable"
++            "project-keep" = "Keep"
++
++            [workspace-sidebar.project-colors]
++            "project-test" = "#60A5FA"
++            "project-keep" = "#F87171"
++
++            [mode.main.binding]
++            alt-h = 'focus left' # preserve me
++            """
++        try original.write(to: targetUrl, atomically: true, encoding: .utf8)
++
++        try persistWorkspaceSidebarProjectMetadata(
++            projectId: "project-test",
++            label: nil,
++            colorHex: nil,
++            targetUrl: targetUrl,
++        )
++
++        let persisted = try String(contentsOf: targetUrl, encoding: .utf8)
++        XCTAssertFalse(persisted.contains("\"project-test\""))
++        XCTAssertTrue(persisted.contains("\"project-keep\" = \"Keep\""))
++        XCTAssertTrue(persisted.contains("\"project-keep\" = \"#F87171\""))
++        XCTAssertTrue(persisted.contains("alt-h = 'focus left' # preserve me"))
++        let (parsed, errors) = parseConfig(persisted)
++        XCTAssertEqual(errors.descriptions, [])
++        XCTAssertNil(parsed.workspaceSidebar.projectLabels["project-test"])
++        XCTAssertNil(parsed.workspaceSidebar.projectColors["project-test"])
++    }
++
++    func testTomlEscapeEncodesEveryControlCharacter() {
++        let controlScalars = (Array(0x00 ... 0x1F) + Array(0x7F ... 0x9F))
++            .compactMap(UnicodeScalar.init)
++        let raw = String(String.UnicodeScalarView(controlScalars))
++        let escaped = tomlEscape(raw)
++
++        XCTAssertEqual(escaped, "\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000B\\f\\r\\u000E\\u000F\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001A\\u001B\\u001C\\u001D\\u001E\\u001F\\u007F\\u0080\\u0081\\u0082\\u0083\\u0084\\u0085\\u0086\\u0087\\u0088\\u0089\\u008A\\u008B\\u008C\\u008D\\u008E\\u008F\\u0090\\u0091\\u0092\\u0093\\u0094\\u0095\\u0096\\u0097\\u0098\\u0099\\u009A\\u009B\\u009C\\u009D\\u009E\\u009F")
++        XCTAssertFalse(escaped.unicodeScalars.contains { scalar in
++            scalar.value <= 0x1F || (0x7F ... 0x9F).contains(scalar.value)
++        })
++    }
++
++    func testTomlEscapeRoundTripsQuotesBackslashesAndCommentCharacters() {
++        let raw = "Client \\\"A\\\" \\\\ # ="
++        let updated = updateWorkspaceSidebarProjectLabelConfig(
++            in: "config-version = 2",
++            projectId: "project-safe",
++            label: raw,
++        )
++        let (parsed, errors) = parseConfig(updated)
++        XCTAssertEqual(errors.descriptions, [])
++        XCTAssertEqual(parsed.workspaceSidebar.projectLabels["project-safe"], raw)
++    }
++
+ }
+diff --git a/Sources/AppBundleTests/config/ConfigTestWorkspaceSidebarConfig.swift b/Sources/AppBundleTests/config/ConfigTestWorkspaceSidebarConfig.swift
+index e087eea2..5a173e5f 100644
+--- a/Sources/AppBundleTests/config/ConfigTestWorkspaceSidebarConfig.swift
++++ b/Sources/AppBundleTests/config/ConfigTestWorkspaceSidebarConfig.swift
+@@ -10,6 +10,7 @@ extension ConfigTest {
+             [workspace-sidebar]
+                 enabled = true
+                 enable-focus = true
++                stay-on-top = false
+                 auto-hide = true
+                 always-expanded = true
+                 width = 280
+@@ -40,6 +41,7 @@ extension ConfigTest {
+             WorkspaceSidebarConfig(
+                 enabled: true,
+                 enableFocus: true,
++                stayOnTop: false,
+                 autoHide: true,
+                 alwaysExpanded: true,
+                 collapsedWidth: 44,
+@@ -67,6 +69,7 @@ extension ConfigTest {
+         )
+         assertEquals(backwardCompatibleErrors, [])
+         XCTAssertFalse(backwardCompatible.workspaceSidebar.alwaysExpanded)
++        XCTAssertTrue(backwardCompatible.workspaceSidebar.stayOnTop)
+ 
+         let (solidChrome, solidChromeErrors) = parseConfig(
+             """
+diff --git a/Sources/AppBundleTests/testUtil.swift b/Sources/AppBundleTests/testUtil.swift
+index 7816864b..bad55a75 100644
+--- a/Sources/AppBundleTests/testUtil.swift
++++ b/Sources/AppBundleTests/testUtil.swift
+@@ -44,6 +44,10 @@ func setUpWorkspacesForTests() {
+             child.unbindFromParent()
+         }
+     }
++    for child in macosMinimizedWindowsContainer.children {
++        child.unbindFromParent()
++    }
++    setAgentSnapshotAfterMembershipCaptureForTests(nil)
+     resetWinMuxWorkspaceStateForTests()
+     check(Workspace.get(byName: "setUpWorkspacesForTests").focusWorkspace())
+     Workspace.reconcileWorkspaceState()
+@@ -92,7 +96,7 @@ extension WorkspaceCmdArgs {
+ }
+ 
+ extension MoveNodeToWorkspaceCmdArgs {
+-    init(target: WorkspaceTarget, wrapAround: Bool? = nil) {
++    init(target: MoveNodeToWorkspaceTarget, wrapAround: Bool? = nil) {
+         self = MoveNodeToWorkspaceCmdArgs(rawArgs: [])
+         self.target = .initialized(target)
+         self._wrapAround = wrapAround
+diff --git a/Sources/AppBundleTests/ui/WorkspaceNamingTest.swift b/Sources/AppBundleTests/ui/WorkspaceNamingTest.swift
+index 9264532c..d69b88df 100644
+--- a/Sources/AppBundleTests/ui/WorkspaceNamingTest.swift
++++ b/Sources/AppBundleTests/ui/WorkspaceNamingTest.swift
+@@ -482,9 +482,13 @@ final class WorkspaceNamingTest: XCTestCase {
+         let first = createWorkspaceProject()
+         let second = createWorkspaceProject()
+ 
+-        XCTAssertEqual(first.id, "project-1")
+-        XCTAssertEqual(second.id, "project-2")
+-        XCTAssertEqual(workspaceProjects().map(\.id).filter { $0.hasPrefix("project-") }.sorted(), ["project-1", "project-2"])
++        assertUuidProjectId(first.id)
++        assertUuidProjectId(second.id)
++        XCTAssertNotEqual(first.id, second.id)
++        XCTAssertEqual(
++            Set(workspaceProjects().map(\.id).filter { $0.hasPrefix("project-") }),
++            Set([first.id, second.id]),
++        )
+     }
+ 
+     func testProjectCreationAppendsAfterDeletedMiddleProject() throws {
+@@ -495,16 +499,30 @@ final class WorkspaceNamingTest: XCTestCase {
+         try deleteWorkspaceProject(second.id)
+         let fourth = createWorkspaceProject()
+ 
+-        XCTAssertEqual(first.id, "project-1")
+-        XCTAssertEqual(second.id, "project-2")
+-        XCTAssertEqual(third.id, "project-3")
+-        XCTAssertEqual(fourth.id, "project-4")
++        assertUuidProjectId(first.id)
++        assertUuidProjectId(second.id)
++        assertUuidProjectId(third.id)
++        assertUuidProjectId(fourth.id)
++        XCTAssertEqual(Set([first.id, second.id, third.id, fourth.id]).count, 4)
+         XCTAssertEqual(
+             workspaceProjects().map(\.id).filter { $0.hasPrefix("project-") },
+-            ["project-1", "project-3", "project-4"],
++            [first.id, third.id, fourth.id],
+         )
+     }
+ 
++    func testProjectIdsDoNotRepeatAcrossWorkspaceStateRestart() {
++        var beforeRestart = WinMuxWorkspaceState()
++        let retiredId = beforeRestart.nextGeneratedProjectIdentity().id
++        beforeRestart.registerProject(WorkspaceProject(id: retiredId, name: "Retired", order: 1))
++
++        let afterRestart = WinMuxWorkspaceState()
++        let newId = afterRestart.nextGeneratedProjectIdentity().id
++
++        assertUuidProjectId(retiredId)
++        assertUuidProjectId(newId)
++        XCTAssertNotEqual(newId, retiredId)
++    }
++
+     func testProjectNamesFollowStableInsertionOrder() throws {
+         let first = createWorkspaceProject()
+         let second = createWorkspaceProject()
+@@ -587,4 +605,14 @@ final class WorkspaceNamingTest: XCTestCase {
+         XCTAssertTrue(returnedWorkspace === defaultWorkspace)
+     }
+ 
++    private func assertUuidProjectId(
++        _ projectId: WorkspaceProjectId,
++        file: StaticString = #filePath,
++        line: UInt = #line,
++    ) {
++        let rawId = projectId.rawValue
++        XCTAssertTrue(rawId.hasPrefix("project-"), file: file, line: line)
++        XCTAssertNotNil(UUID(uuidString: String(rawId.dropFirst("project-".count))), file: file, line: line)
++    }
++
+ }
+diff --git a/Sources/AppBundleTests/ui/WorkspaceSidebarDragTest.swift b/Sources/AppBundleTests/ui/WorkspaceSidebarDragTest.swift
+index 27303aef..1063d670 100644
+--- a/Sources/AppBundleTests/ui/WorkspaceSidebarDragTest.swift
++++ b/Sources/AppBundleTests/ui/WorkspaceSidebarDragTest.swift
+@@ -256,6 +256,18 @@ final class WorkspaceSidebarDragTest: XCTestCase {
+         }
+     }
+ 
++    func testWorkspaceSidebarCanRenderBelowDockWhileRemainingAboveNormalWindows() {
++        let loweredLevel = workspaceSidebarPanelLevel(stayOnTop: false)
++
++        XCTAssertEqual(loweredLevel, .floating)
++        XCTAssertGreaterThan(loweredLevel.rawValue, NSWindow.Level.normal.rawValue)
++        XCTAssertLessThan(loweredLevel.rawValue, Int(CGWindowLevelForKey(.dockWindow)))
++        XCTAssertEqual(
++            workspaceSidebarPanelLevel(stayOnTop: true),
++            WinMuxPanelLayer.workspaceSidebar.level,
++        )
++    }
++
+     func testLeftMouseButtonPressedUsesBitmask() {
+         XCTAssertTrue(isLeftMouseButtonPressed(mask: 0b1))
+         XCTAssertTrue(isLeftMouseButtonPressed(mask: 0b11))
+diff --git a/Sources/Cli/_main.swift b/Sources/Cli/_main.swift
+index 181186e6..969fecf6 100644
+--- a/Sources/Cli/_main.swift
++++ b/Sources/Cli/_main.swift
+@@ -10,6 +10,7 @@ let usage =
+     SUBCOMMANDS:
+     \(subcommandDescriptions.sortedBy { $0[0] }.toPaddingTable(columnSeparator: "   ").joined(separator: "\n"))
+     """
++private let cliUsageOrParseErrorExitCode: Int32 = 2
+ 
+ @main
+ struct Main {
+@@ -17,7 +18,7 @@ struct Main {
+         let args = CommandLine.arguments.slice(1...) ?? []
+ 
+         if args.isEmpty {
+-            exit(1, err: usage)
++            exit(cliUsageOrParseErrorExitCode, err: usage)
+         }
+         if args.first == "--help" || args.first == "-h" {
+             exit(0, out: usage)
+@@ -26,11 +27,14 @@ struct Main {
+         if args.first == "--version" || args.first == "-v" {
+             let connection = NWConnection(to: NWEndpoint.unix(path: socketPath), using: .tcp)
+             let serverVersionAndHash: String?
+-            if await connection.startBlocking().error == nil {
+-                let ans = await run(connection, [], stdin: "", windowId: nil, workspace: nil)
+-                serverVersionAndHash = ans.serverVersionAndHash
+-            } else {
+-                serverVersionAndHash = nil
++            switch await connection.initConnection().error {
++                case nil:
++                    let ans = await run(connection, [], stdin: "", windowId: nil, workspace: nil)
++                    serverVersionAndHash = ans.serverVersionAndHash
++                case .nwError:
++                    serverVersionAndHash = nil
++                case .customError(let error):
++                    exit(1, err: error)
+             }
+             print(
+                 """
+@@ -57,17 +61,27 @@ struct Main {
+             case .help(let help):
+                 exit(0, out: help)
+             case .failure(let e):
+-                exit(1, err: e)
++                exit(cliUsageOrParseErrorExitCode, err: e)
+         }
+ 
+         let connection = NWConnection(to: NWEndpoint.unix(path: socketPath), using: .tcp)
+ 
+-        if let e = await connection.startBlocking().error {
+-            exit(1, err: "Can't connect to WinMux server. Is WinMux.app running?\n\(e.localizedDescription)")
++        switch await connection.initConnection().error {
++            case nil:
++                break
++            case .nwError(let error):
++                exit(1, err: "Can't connect to WinMux server. Is WinMux.app running?\n\(error.localizedDescription)")
++            case .customError(let error):
++                exit(1, err: error)
+         }
+ 
+         var stdin = ""
+-        if shouldReadRelativeWorkspaceStdin(parsedArgs), hasStdin() {
++        if shouldReadAgentStdin(parsedArgs) {
++            switch readBoundedUtf8Stdin() {
++                case .success(let input): stdin = input
++                case .failure(let error): exit(1, err: error)
++            }
++        } else if shouldReadRelativeWorkspaceStdin(parsedArgs), hasStdin() {
+             if !hasExplicitRelativeWorkspaceStdinFlag(parsedArgs) {
+                 exit(
+                     1,
+@@ -121,6 +135,10 @@ struct Main {
+     }
+ }
+ 
++func shouldReadAgentStdin(_ args: any CmdArgs) -> Bool {
++    (args as? AgentCmdArgs)?.useStdin == true
++}
++
+ private func shouldReadRelativeWorkspaceStdin(_ args: any CmdArgs) -> Bool {
+     switch args {
+         case let args as WorkspaceCmdArgs:
+diff --git a/Sources/Cli/cliUtil.swift b/Sources/Cli/cliUtil.swift
+index 9d325722..4aeb8301 100644
+--- a/Sources/Cli/cliUtil.swift
++++ b/Sources/Cli/cliUtil.swift
+@@ -3,7 +3,38 @@ import Darwin
+ import Foundation
+ 
+ let cliClientVersionAndHash: String = "\(winMuxAppVersion) \(gitHash)"
++let maxAgentStdinBytes = 16 * 1024 * 1024
++private let stdinReadChunkBytes = 64 * 1024
+ 
+ func hasStdin() -> Bool {
+     isatty(STDIN_FILENO) != 1
+ }
++
++func readBoundedUtf8Stdin(
++    maxBytes: Int = maxAgentStdinBytes,
++    readChunk: (Int) throws -> Data? = { try FileHandle.standardInput.read(upToCount: $0) },
++) -> Result<String, String> {
++    guard maxBytes >= 0 else {
++        return .failure("stdin byte limit must not be negative")
++    }
++
++    var data = Data()
++    do {
++        while true {
++            let remainingBytes = maxBytes - data.count
++            let bytesToRead = remainingBytes >= stdinReadChunkBytes ? stdinReadChunkBytes : remainingBytes + 1
++            guard let chunk = try readChunk(bytesToRead), !chunk.isEmpty else { break }
++            data.append(chunk)
++            if data.count > maxBytes {
++                return .failure("stdin size limit of \(maxBytes) bytes is exceeded")
++            }
++        }
++    } catch {
++        return .failure("Failed to read stdin: \(error.localizedDescription)")
++    }
++
++    guard let input = String(data: data, encoding: .utf8) else {
++        return .failure("stdin is not valid UTF-8")
++    }
++    return .success(input)
++}
+diff --git a/Sources/Cli/subcommandDescriptionsGenerated.swift b/Sources/Cli/subcommandDescriptionsGenerated.swift
+index 8d5bb0be..f54dd4c8 100644
+--- a/Sources/Cli/subcommandDescriptionsGenerated.swift
++++ b/Sources/Cli/subcommandDescriptionsGenerated.swift
+@@ -1,5 +1,5 @@
+-// FILE IS GENERATED FROM docs/winmux-*.adoc files
+-// TO REGENERATE THE FILE RUN generate.sh
++// CLI SUBCOMMAND DESCRIPTION TABLE. The legacy generated filename is retained for source compatibility.
++// Keep this list in sync with the public command manifest.
+ 
+ let subcommandDescriptions = [
+     ["  agent", "Query, validate, and apply agent-oriented window layout JSON"],
+@@ -7,7 +7,9 @@ let subcommandDescriptions = [
+     ["  close-all-windows-but-current", "On the focused workspace, close all windows but current"],
+     ["  close", "Close the focused window"],
+     ["  config", "Query WinMux config options"],
++    ["  create-project", "Create a project and print its stable project ID"],
+     ["  debug-windows", "Interactive command to record Accessibility API debug information to create bug reports"],
++    ["  delete-project", "Delete a project after verifying its window count, moving windows to a fallback project"],
+     ["  doctor", "Print diagnostics: permissions, monitors, per-app accessibility latency, manager state"],
+     ["  palette", "Toggle the window switcher palette (fuzzy-search all windows)"],
+     ["  enable", "Temporarily enable or disable WinMux"],
+@@ -22,6 +24,7 @@ let subcommandDescriptions = [
+     ["  list-exec-env-vars", "List environment variables that exec-* commands and callbacks are run with"],
+     ["  list-modes", "Print a list of modes currently specified in the configuration"],
+     ["  list-monitors", "Print monitors that satisfy conditions"],
++    ["  list-projects", "Print projects that satisfy conditions"],
+     ["  list-windows", "Print windows that satisfy conditions"],
+     ["  list-workspaces", "Print workspaces that satisfy conditions"],
+     ["  macos-native-fullscreen", "Toggle macOS fullscreen for the focused window"],
+@@ -33,9 +36,12 @@ let subcommandDescriptions = [
+     ["  move-node-to-workspace", "Move the focused window to the specified workspace"],
+     ["  move-workspace-to-monitor", "Move workspace to monitor targeted by relative direction, by order, or by pattern."],
+     ["  move", "Move the focused window in the given direction"],
++    ["  open-sidebar", "Open the workspace sidebar and arm type-to-search"],
+     ["  project", "Focus the specified project"],
+     ["  reload-config", "Reload currently active config"],
++    ["  rename-project", "Rename a project by its stable project ID"],
+     ["  resize", "Resize the focused window"],
++    ["  set-project-color", "Set or reset a project's sidebar color by its stable project ID"],
+     ["  split", "Split focused window"],
+     ["  stack-with", "Put the focused window into the same tab group as the nearest window in the specified direction."],
+     ["  subscribe", "Subscribe to WinMux events and receive notifications via socket"],
+diff --git a/Sources/Common/cmdArgs/ArgParser.swift b/Sources/Common/cmdArgs/ArgParser.swift
+index a6f02dac..4834eabf 100644
+--- a/Sources/Common/cmdArgs/ArgParser.swift
++++ b/Sources/Common/cmdArgs/ArgParser.swift
+@@ -46,6 +46,20 @@ struct PosArgParserContext {
+     let argPlaceholderIfMandatory: String?
+ }
+ 
++func dashDashArg<Root: WinMuxAny>(mandatory: Bool) -> PosArgParser<Root, ()> {
++    ArgParser(
++        \.noopKeyPath,
++        { input in
++            switch (input.arg, mandatory) {
++                case ("--", _): .succ((), advanceBy: 1)
++                case (_, false): .succ((), advanceBy: 0)
++                case (_, true): .fail("Expected: --. Got: \(input.arg.singleQuoted)", advanceBy: 0)
++            }
++        },
++        context: PosArgParserContext(argPlaceholderIfMandatory: mandatory ? "--" : nil),
++    )
++}
++
+ public struct ParsedCliArgs<T> {
+     var value: Parsed<T>
+     var advanceBy: Int
+diff --git a/Sources/Common/cmdArgs/ArgParserInput.swift b/Sources/Common/cmdArgs/ArgParserInput.swift
+index 4f7966c5..520d05b1 100644
+--- a/Sources/Common/cmdArgs/ArgParserInput.swift
++++ b/Sources/Common/cmdArgs/ArgParserInput.swift
+@@ -1,6 +1,7 @@
+ struct PosArgParserInput: ArgParserInput {
+     /*conforms*/ let index: Int
+     /*conforms*/ let args: StrArrSlice
++    var sawDashDash: Bool
+ 
+     var arg: String { args[index] }
+ }
+@@ -23,13 +24,19 @@ extension ArgParserInput {
+ 
+     func nonFlagArgs() -> ArrSlice<String> {
+         var i = index
+-        while args.indices.contains(i) && !args[i].starts(with: "-") {
++        while args.indices.contains(i) && !args[i].isCliDashFlag {
+             i += 1
+         }
+         return args.slice(index ..< i).orDie()
+     }
+ 
+     func nonFlagArgOrNil() -> String? {
+-        args.getOrNil(atIndex: index)?.takeIf { !$0.starts(with: "-") }
++        args.getOrNil(atIndex: index)?.takeIf { !$0.isCliDashFlag }
++    }
++}
++
++extension String {
++    public var isCliDashFlag: Bool {
++        self != "--" && self != "-" && starts(with: "-")
+     }
+ }
+diff --git a/Sources/Common/cmdArgs/cmdArgsManifest.swift b/Sources/Common/cmdArgs/cmdArgsManifest.swift
+index 18c07f56..0c7c1513 100644
+--- a/Sources/Common/cmdArgs/cmdArgsManifest.swift
++++ b/Sources/Common/cmdArgs/cmdArgsManifest.swift
+@@ -6,7 +6,9 @@ public enum CmdKind: String, CaseIterable, Equatable, Sendable {
+     case close
+     case closeAllWindowsButCurrent = "close-all-windows-but-current"
+     case config
++    case createProject = "create-project"
+     case debugWindows = "debug-windows"
++    case deleteProject = "delete-project"
+     case doctor
+     case enable
+     case execAndForget = "exec-and-forget"
+@@ -21,6 +23,7 @@ public enum CmdKind: String, CaseIterable, Equatable, Sendable {
+     case listExecEnvVars = "list-exec-env-vars"
+     case listModes = "list-modes"
+     case listMonitors = "list-monitors"
++    case listProjects = "list-projects"
+     case listWindows = "list-windows"
+     case listWorkspaces = "list-workspaces"
+     case macosNativeFullscreen = "macos-native-fullscreen"
+@@ -36,7 +39,9 @@ public enum CmdKind: String, CaseIterable, Equatable, Sendable {
+     case palette
+     case project
+     case reloadConfig = "reload-config"
++    case renameProject = "rename-project"
+     case resize
++    case setProjectColor = "set-project-color"
+     case split
+     case stackWith = "stack-with"
+     case subscribe
+@@ -62,8 +67,12 @@ func initSubcommands() -> [String: any SubCommandParserProtocol] {
+                 result[kind.rawValue] = SubCommandParser(CloseAllWindowsButCurrentCmdArgs.init)
+             case .config:
+                 result[kind.rawValue] = SubCommandParser(parseConfigCmdArgs)
++            case .createProject:
++                result[kind.rawValue] = SubCommandParser(parseCreateProjectCmdArgs)
+             case .debugWindows:
+                 result[kind.rawValue] = SubCommandParser(DebugWindowsCmdArgs.init)
++            case .deleteProject:
++                result[kind.rawValue] = SubCommandParser(parseDeleteProjectCmdArgs)
+             case .doctor:
+                 result[kind.rawValue] = SubCommandParser(DoctorCmdArgs.init)
+             case .enable:
+@@ -92,6 +101,8 @@ func initSubcommands() -> [String: any SubCommandParserProtocol] {
+                 result[kind.rawValue] = SubCommandParser(parseListModesCmdArgs)
+             case .listMonitors:
+                 result[kind.rawValue] = SubCommandParser(parseListMonitorsCmdArgs)
++            case .listProjects:
++                result[kind.rawValue] = SubCommandParser(parseListProjectsCmdArgs)
+             case .listWindows:
+                 result[kind.rawValue] = SubCommandParser(parseListWindowsCmdArgs)
+             case .listWorkspaces:
+@@ -126,8 +137,12 @@ func initSubcommands() -> [String: any SubCommandParserProtocol] {
+                 result[kind.rawValue] = SubCommandParser(parseProjectCmdArgs)
+             case .reloadConfig:
+                 result[kind.rawValue] = SubCommandParser(ReloadConfigCmdArgs.init)
++            case .renameProject:
++                result[kind.rawValue] = SubCommandParser(parseRenameProjectCmdArgs)
+             case .resize:
+                 result[kind.rawValue] = SubCommandParser(parseResizeCmdArgs)
++            case .setProjectColor:
++                result[kind.rawValue] = SubCommandParser(parseSetProjectColorCmdArgs)
+             case .split:
+                 result[kind.rawValue] = SubCommandParser(parseSplitCmdArgs)
+             case .stackWith:
+diff --git a/Sources/Common/cmdArgs/impl/AgentCmdArgs.swift b/Sources/Common/cmdArgs/impl/AgentCmdArgs.swift
+index cb0904cc..ebe6cbb5 100644
+--- a/Sources/Common/cmdArgs/impl/AgentCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/AgentCmdArgs.swift
+@@ -1,7 +1,7 @@
+ private let agent_help = """
+     USAGE: agent [-h|--help] query [--path <path>]
+-       OR: agent [-h|--help] check --path <path>
+-       OR: agent [-h|--help] apply --path <path>
++       OR: agent [-h|--help] check (--path <path>|--stdin)
++       OR: agent [-h|--help] apply (--path <path>|--stdin)
+        OR: agent [-h|--help] skill
+     """
+ 
+@@ -14,12 +14,17 @@ public struct AgentCmdArgs: CmdArgs {
+         help: agent_help,
+         flags: [
+             "--path": singleValueSubArgParser(\.path, "<path>") { $0 },
++            "--stdin": trueBoolFlag(\.useStdin),
+         ],
+         posArgs: [newMandatoryPosArgParser(\.subcommand, parseAgentSubcommand, placeholder: AgentSubcommand.unionLiteral)],
++        conflictingOptions: [
++            ["--path", "--stdin"],
++        ],
+     )
+ 
+     public var subcommand: Lateinit<AgentSubcommand> = .uninitialized
+     public var path: String? = nil
++    public var useStdin: Bool = false
+ }
+ 
+ public enum AgentSubcommand: String, CaseIterable, Equatable, Sendable {
+@@ -31,15 +36,21 @@ public enum AgentSubcommand: String, CaseIterable, Equatable, Sendable {
+ 
+ func parseAgentCmdArgs(_ args: StrArrSlice) -> ParsedCmd<AgentCmdArgs> {
+     parseSpecificCmdArgs(AgentCmdArgs(rawArgs: args), args)
+-        .filter("--path is mandatory for 'check' and 'apply'") {
++        .filter("--path or --stdin is mandatory for 'check' and 'apply'") {
+             switch $0.subcommand.val {
+-                case .check, .apply: $0.path != nil
++                case .check, .apply: $0.path != nil || $0.useStdin
+                 case .query, .skill: true
+             }
+         }
+         .filter("--path is incompatible with 'skill'") {
+             $0.subcommand.val != .skill || $0.path == nil
+         }
++        .filter("--stdin is incompatible with 'query' and 'skill'") {
++            switch $0.subcommand.val {
++                case .check, .apply: true
++                case .query, .skill: !$0.useStdin
++            }
++        }
+ }
+ 
+ private func parseAgentSubcommand(i: PosArgParserInput) -> ParsedCliArgs<AgentSubcommand> {
+diff --git a/Sources/Common/cmdArgs/impl/FocusMonitorCmdArgs.swift b/Sources/Common/cmdArgs/impl/FocusMonitorCmdArgs.swift
+index 2333711b..464c6d31 100644
+--- a/Sources/Common/cmdArgs/impl/FocusMonitorCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/FocusMonitorCmdArgs.swift
+@@ -8,7 +8,10 @@ public struct FocusMonitorCmdArgs: CmdArgs {
+         flags: [
+             "--wrap-around": trueBoolFlag(\.wrapAround),
+         ],
+-        posArgs: [newMandatoryPosArgParser(\.target, parseTarget, placeholder: MonitorTarget.cases.joinedCliArgs)],
++        posArgs: [
++            dashDashArg(mandatory: false),
++            newMandatoryPosArgParser(\.target, parseTarget, placeholder: MonitorTarget.cases.joinedCliArgs),
++        ],
+     )
+ 
+     public var wrapAround: Bool = false
+@@ -21,18 +24,18 @@ func parseFocusMonitorCmdArgs(_ args: StrArrSlice) -> ParsedCmd<FocusMonitorCmdA
+ }
+ 
+ func parseTarget(i: PosArgParserInput) -> ParsedCliArgs<MonitorTarget> {
+-    switch i.arg {
+-        case "next":
++    switch (i.arg, i.sawDashDash) {
++        case ("next", false):
+             return .succ(.relative(.next), advanceBy: 1)
+-        case "prev":
++        case ("prev", false):
+             return .succ(.relative(.prev), advanceBy: 1)
+-        case "left":
++        case ("left", false):
+             return .succ(.direction(.left), advanceBy: 1)
+-        case "down":
++        case ("down", false):
+             return .succ(.direction(.down), advanceBy: 1)
+-        case "up":
++        case ("up", false):
+             return .succ(.direction(.up), advanceBy: 1)
+-        case "right":
++        case ("right", false):
+             return .succ(.direction(.right), advanceBy: 1)
+         default:
+             let args = i.nonFlagArgs()
+diff --git a/Sources/Common/cmdArgs/impl/ListWindowsCmdArgs.swift b/Sources/Common/cmdArgs/impl/ListWindowsCmdArgs.swift
+index 2128726d..e94192b7 100644
+--- a/Sources/Common/cmdArgs/impl/ListWindowsCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/ListWindowsCmdArgs.swift
+@@ -128,6 +128,7 @@ public enum WorkspaceFilter: Equatable, Sendable {
+ public enum FormatVar: Equatable {
+     case window(WindowFormatVar)
+     case workspace(WorkspaceFormatVar)
++    case project(ProjectFormatVar)
+     case app(AppFormatVar)
+     case monitor(MonitorFormatVar)
+ 
+@@ -146,6 +147,17 @@ public enum FormatVar: Equatable {
+         case workspaceRootContainerLayout = "workspace-root-container-layout"
+     }
+ 
++    public enum ProjectFormatVar: String, Equatable, CaseIterable {
++        case projectIndex = "project-index"
++        case projectId = "project-id"
++        case projectName = "project-name"
++        case projectColor = "project-color"
++        case projectFocused = "project-is-focused"
++        case projectVisible = "project-is-visible"
++        case projectWorkspaceCount = "project-workspace-count"
++        case projectWindowCount = "project-window-count"
++    }
++
+     public enum AppFormatVar: String, Equatable, CaseIterable {
+         case appBundleId = "app-bundle-id"
+         case appName = "app-name"
+@@ -169,7 +181,7 @@ public enum PlainInterVar: String, CaseIterable {
+ }
+ 
+ public enum FormatObjectKind: CaseIterable, Sendable {
+-    case window, workspace, app, monitor
++    case window, workspace, project, app, monitor
+ }
+ 
+ public func getAvailableInterVars(for kind: FormatObjectKind) -> [String] {
+@@ -183,6 +195,7 @@ private func _getAvailableInterVars(for kind: FormatObjectKind) -> [String] {
+         case .workspace:
+             FormatVar.WorkspaceFormatVar.allCases.map(\.rawValue) +
+                 _getAvailableInterVars(for: .monitor)
++        case .project: FormatVar.ProjectFormatVar.allCases.map(\.rawValue)
+         case .window:
+             FormatVar.WindowFormatVar.allCases.map(\.rawValue) +
+                 _getAvailableInterVars(for: .workspace) +
+diff --git a/Sources/Common/cmdArgs/impl/ModeCmdArgs.swift b/Sources/Common/cmdArgs/impl/ModeCmdArgs.swift
+index ed270287..68938fc0 100644
+--- a/Sources/Common/cmdArgs/impl/ModeCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/ModeCmdArgs.swift
+@@ -6,7 +6,7 @@ public struct ModeCmdArgs: CmdArgs {
+         allowInConfig: true,
+         help: mode_help_generated,
+         flags: [:],
+-        posArgs: [newMandatoryPosArgParser(\.targetMode, consumeStrCliArg, placeholder: "<binding-mode>")],
++        posArgs: [dashDashArg(mandatory: false), newMandatoryPosArgParser(\.targetMode, consumeStrCliArg, placeholder: "<binding-mode>")],
+     )
+ 
+     public var targetMode: Lateinit<String> = .uninitialized
+diff --git a/Sources/Common/cmdArgs/impl/MoveNodeToMonitorCmdArgs.swift b/Sources/Common/cmdArgs/impl/MoveNodeToMonitorCmdArgs.swift
+index 88d8e712..ad9a65be 100644
+--- a/Sources/Common/cmdArgs/impl/MoveNodeToMonitorCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/MoveNodeToMonitorCmdArgs.swift
+@@ -13,7 +13,10 @@ public struct MoveNodeToMonitorCmdArgs: CmdArgs {
+             "--focus-follows-window": trueBoolFlag(\.focusFollowsWindow),
+             "--fail-if-noop": trueBoolFlag(\.failIfNoop),
+         ],
+-        posArgs: [newMandatoryPosArgParser(\.target, parseTarget, placeholder: MonitorTarget.cases.joinedCliArgs)],
++        posArgs: [
++            dashDashArg(mandatory: false),
++            newMandatoryPosArgParser(\.target, parseTarget, placeholder: MonitorTarget.cases.joinedCliArgs),
++        ],
+     )
+ 
+     public init(target: MonitorTarget) {
+diff --git a/Sources/Common/cmdArgs/impl/MoveNodeToProjectCmdArgs.swift b/Sources/Common/cmdArgs/impl/MoveNodeToProjectCmdArgs.swift
+index 2531c34b..73f9fedf 100644
+--- a/Sources/Common/cmdArgs/impl/MoveNodeToProjectCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/MoveNodeToProjectCmdArgs.swift
+@@ -6,15 +6,17 @@ public struct MoveNodeToProjectCmdArgs: CmdArgs {
+         allowInConfig: true,
+         help: move_node_to_project_help_generated,
+         flags: [
++            "--project-id": explicitProjectIdFlag(\.explicitProjectId),
+             "--wrap-around": optionalTrueBoolFlag(\._wrapAround),
+             "--fail-if-noop": trueBoolFlag(\.failIfNoop),
+             "--window-id": optionalWindowIdFlag(),
+             "--focus-follows-window": trueBoolFlag(\.focusFollowsWindow),
+         ],
+-        posArgs: [newMandatoryPosArgParser(\.target, parseProjectTarget, placeholder: projectTargetPlaceholder)],
++        posArgs: [optionalProjectTargetParser(\.target)],
+     )
+ 
+     public var target: Lateinit<ProjectTarget> = .uninitialized
++    public var explicitProjectId: String?
+     public var _wrapAround: Bool?
+     public var failIfNoop: Bool = false
+     public var focusFollowsWindow: Bool = false
+@@ -26,6 +28,19 @@ extension MoveNodeToProjectCmdArgs {
+ 
+ func parseMoveNodeToProjectCmdArgs(_ args: StrArrSlice) -> ParsedCmd<MoveNodeToProjectCmdArgs> {
+     parseSpecificCmdArgs(MoveNodeToProjectCmdArgs(rawArgs: args), args)
++        .filter("Project target is mandatory (use a positional target or --project-id <project-id>)") {
++            $0.target.isInitialized || $0.explicitProjectId != nil
++        }
++        .filterNot("--project-id is incompatible with a positional project target") {
++            $0.target.isInitialized && $0.explicitProjectId != nil
++        }
++        .map { args in
++            var args = args
++            if let projectId = args.explicitProjectId {
++                args.target = .initialized(.directId(projectId))
++            }
++            return args
++        }
+         .filter("--wrapAround requires using (next|prev) argument") { ($0._wrapAround != nil).implies($0.target.val.isRelative) }
+         .filterNot("--fail-if-noop is incompatible with (next|prev)") { $0.failIfNoop && $0.target.val.isRelative }
+         .filterNot("--window-id is incompatible with (next|prev)") { $0.windowId != nil && $0.target.val.isRelative }
+diff --git a/Sources/Common/cmdArgs/impl/MoveNodeToWorkspaceCmdArgs.swift b/Sources/Common/cmdArgs/impl/MoveNodeToWorkspaceCmdArgs.swift
+index ef054f3f..b0a58143 100644
+--- a/Sources/Common/cmdArgs/impl/MoveNodeToWorkspaceCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/MoveNodeToWorkspaceCmdArgs.swift
+@@ -13,7 +13,10 @@ public struct MoveNodeToWorkspaceCmdArgs: CmdArgs {
+             "--stdin": optionalTrueBoolFlag(\.explicitStdinFlag),
+             "--no-stdin": optionalFalseBoolFlag(\.explicitStdinFlag),
+         ],
+-        posArgs: [newMandatoryPosArgParser(\.target, parseWorkspaceTarget, placeholder: workspaceTargetPlaceholder)],
++        posArgs: [
++            dashDashArg(mandatory: false),
++            newMandatoryPosArgParser(\.target, parseMoveNodeToWorkspaceTarget, placeholder: moveNodeToWorkspaceTargetPlaceholder),
++        ],
+         conflictingOptions: [
+             ["--stdin", "--no-stdin"],
+         ],
+@@ -23,13 +26,44 @@ public struct MoveNodeToWorkspaceCmdArgs: CmdArgs {
+     public var explicitStdinFlag: Bool? = nil
+     public var failIfNoop: Bool = false
+     public var focusFollowsWindow: Bool = false
+-    public var target: Lateinit<WorkspaceTarget> = .uninitialized
++    public var target: Lateinit<MoveNodeToWorkspaceTarget> = .uninitialized
+ 
+     public init(rawArgs: StrArrSlice) {
+         self.commonState = .init(rawArgs)
+     }
+ }
+ 
++public enum MoveNodeToWorkspaceTarget: Equatable, Sendable {
++    case newWorkspace
++    case relative(NextPrev)
++    case direct(WorkspaceName)
++
++    public var isRelative: Bool {
++        switch self {
++            case .relative: true
++            case .newWorkspace, .direct: false
++        }
++    }
++
++    public func workspaceNameOrNil() -> WorkspaceName? {
++        switch self {
++            case .direct(let name): name
++            case .newWorkspace, .relative: nil
++        }
++    }
++}
++
++private let moveNodeToWorkspaceTargetPlaceholder = "(<workspace-name>|new|next|prev)"
++
++private func parseMoveNodeToWorkspaceTarget(i: PosArgParserInput) -> ParsedCliArgs<MoveNodeToWorkspaceTarget> {
++    switch (i.arg, i.sawDashDash) {
++        case ("new", false): .succ(.newWorkspace, advanceBy: 1)
++        case ("next", false): .succ(.relative(.next), advanceBy: 1)
++        case ("prev", false): .succ(.relative(.prev), advanceBy: 1)
++        default: .init(WorkspaceName.parse(i.arg).map(MoveNodeToWorkspaceTarget.direct), advanceBy: 1)
++    }
++}
++
+ extension MoveNodeToWorkspaceCmdArgs {
+     public var wrapAround: Bool { _wrapAround ?? false }
+     public var useStdin: Bool { explicitStdinFlag ?? false }
+diff --git a/Sources/Common/cmdArgs/impl/MoveWorkpsaceToMonitorCmdArgs.swift b/Sources/Common/cmdArgs/impl/MoveWorkpsaceToMonitorCmdArgs.swift
+index 57f3c4b0..412e0675 100644
+--- a/Sources/Common/cmdArgs/impl/MoveWorkpsaceToMonitorCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/MoveWorkpsaceToMonitorCmdArgs.swift
+@@ -10,6 +10,7 @@ public struct MoveWorkspaceToMonitorCmdArgs: CmdArgs {
+             "--workspace": optionalWorkspaceFlag(),
+         ],
+         posArgs: [
++            dashDashArg(mandatory: false),
+             newMandatoryPosArgParser(\.target, parseTarget, placeholder: MonitorTarget.cases.joinedCliArgs),
+         ],
+     )
+diff --git a/Sources/Common/cmdArgs/impl/ProjectCmdArgs.swift b/Sources/Common/cmdArgs/impl/ProjectCmdArgs.swift
+index 4cb2adc4..0cb58ac0 100644
+--- a/Sources/Common/cmdArgs/impl/ProjectCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/ProjectCmdArgs.swift
+@@ -6,13 +6,15 @@ public struct ProjectCmdArgs: CmdArgs {
+         allowInConfig: true,
+         help: project_help_generated,
+         flags: [
++            "--project-id": explicitProjectIdFlag(\.explicitProjectId),
+             "--wrap-around": optionalTrueBoolFlag(\._wrapAround),
+             "--fail-if-noop": trueBoolFlag(\.failIfNoop),
+         ],
+-        posArgs: [newMandatoryPosArgParser(\.target, parseProjectTarget, placeholder: projectTargetPlaceholder)],
++        posArgs: [optionalProjectTargetParser(\.target)],
+     )
+ 
+     public var target: Lateinit<ProjectTarget> = .uninitialized
++    public var explicitProjectId: String?
+     public var _wrapAround: Bool?
+     public var failIfNoop: Bool = false
+ }
+@@ -23,6 +25,19 @@ extension ProjectCmdArgs {
+ 
+ func parseProjectCmdArgs(_ args: StrArrSlice) -> ParsedCmd<ProjectCmdArgs> {
+     parseSpecificCmdArgs(ProjectCmdArgs(rawArgs: args), args)
++        .filter("Project target is mandatory (use a positional target or --project-id <project-id>)") {
++            $0.target.isInitialized || $0.explicitProjectId != nil
++        }
++        .filterNot("--project-id is incompatible with a positional project target") {
++            $0.target.isInitialized && $0.explicitProjectId != nil
++        }
++        .map { args in
++            var args = args
++            if let projectId = args.explicitProjectId {
++                args.target = .initialized(.directId(projectId))
++            }
++            return args
++        }
+         .filter("--wrapAround requires using (next|prev) argument") { ($0._wrapAround != nil).implies($0.target.val.isRelative) }
+         .filterNot("--fail-if-noop is incompatible with (next|prev)") { $0.failIfNoop && $0.target.val.isRelative }
+ }
+@@ -30,25 +45,45 @@ func parseProjectCmdArgs(_ args: StrArrSlice) -> ParsedCmd<ProjectCmdArgs> {
+ public enum ProjectTarget: Equatable, Sendable {
+     case relative(NextPrev)
+     case index(Int)
++    case directId(String)
+ 
+     public var isRelative: Bool {
+         switch self {
+             case .relative: true
+-            case .index: false
++            case .index, .directId: false
+         }
+     }
+ }
+ 
+-let projectTargetPlaceholder = "(<project-index>|next|prev)"
++let projectTargetPlaceholder = "(<project-id>|<project-index>|next|prev)"
++
++func optionalProjectTargetParser<Root>(
++    _ keyPath: SendableWritableKeyPath<Root, Lateinit<ProjectTarget>>,
++) -> PosArgParser<Root, Lateinit<ProjectTarget>> {
++    ArgParser(keyPath) { input in
++        parseProjectTarget(i: input).map { .initialized($0) }
++    }
++}
++
++func explicitProjectIdFlag<Root>(
++    _ keyPath: SendableWritableKeyPath<Root, String?>,
++) -> SubArgParser<Root, String?> {
++    ArgParser(keyPath) { input in
++        guard let projectId = input.argOrNil else {
++            return .fail("'<project-id>' is mandatory", advanceBy: 0)
++        }
++        return .succ(projectId, advanceBy: 1)
++    }
++}
+ 
+ func parseProjectTarget(i: PosArgParserInput) -> ParsedCliArgs<ProjectTarget> {
+     switch i.arg {
+         case "next": return ParsedCliArgs<ProjectTarget>.succ(.relative(.next), advanceBy: 1)
+         case "prev": return ParsedCliArgs<ProjectTarget>.succ(.relative(.prev), advanceBy: 1)
+         default:
+-            guard let index = Int(i.arg), index > 0 else {
+-                return .fail("Can't parse project target '\(i.arg)'. Expected \(projectTargetPlaceholder)", advanceBy: 1)
++            if let index = Int(i.arg), index > 0 {
++                return ParsedCliArgs<ProjectTarget>.succ(.index(index), advanceBy: 1)
+             }
+-            return ParsedCliArgs<ProjectTarget>.succ(.index(index), advanceBy: 1)
++            return ParsedCliArgs<ProjectTarget>.succ(.directId(i.arg), advanceBy: 1)
+     }
+ }
+diff --git a/Sources/Common/cmdArgs/impl/SummonWorkspaceCmdArgs.swift b/Sources/Common/cmdArgs/impl/SummonWorkspaceCmdArgs.swift
+index c7b876c6..7451e325 100644
+--- a/Sources/Common/cmdArgs/impl/SummonWorkspaceCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/SummonWorkspaceCmdArgs.swift
+@@ -8,7 +8,10 @@ public struct SummonWorkspaceCmdArgs: CmdArgs {
+         flags: [
+             "--fail-if-noop": trueBoolFlag(\.failIfNoop),
+         ],
+-        posArgs: [newMandatoryPosArgParser(\.target, parseWorkspaceName, placeholder: "<workspace>")],
++        posArgs: [
++            dashDashArg(mandatory: false),
++            newMandatoryPosArgParser(\.target, parseWorkspaceName, placeholder: "<workspace>"),
++        ],
+     )
+ 
+     public var target: Lateinit<WorkspaceName> = .uninitialized
+diff --git a/Sources/Common/cmdArgs/impl/TriggerBindingCmdArgs.swift b/Sources/Common/cmdArgs/impl/TriggerBindingCmdArgs.swift
+index a2dc5a49..6783204c 100644
+--- a/Sources/Common/cmdArgs/impl/TriggerBindingCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/TriggerBindingCmdArgs.swift
+@@ -7,7 +7,10 @@ public struct TriggerBindingCmdArgs: CmdArgs {
+         flags: [
+             "--mode": singleValueSubArgParser(\._mode, "<mode-id>") { $0 },
+         ],
+-        posArgs: [newMandatoryPosArgParser(\.binding, consumeStrCliArg, placeholder: "<binding>")],
++        posArgs: [
++            dashDashArg(mandatory: false),
++            newMandatoryPosArgParser(\.binding, consumeStrCliArg, placeholder: "<binding>"),
++        ],
+     )
+ 
+     public var _mode: String? = nil
+diff --git a/Sources/Common/cmdArgs/impl/WorkspaceCmdArgs.swift b/Sources/Common/cmdArgs/impl/WorkspaceCmdArgs.swift
+index 8ca1d551..234eac15 100644
+--- a/Sources/Common/cmdArgs/impl/WorkspaceCmdArgs.swift
++++ b/Sources/Common/cmdArgs/impl/WorkspaceCmdArgs.swift
+@@ -13,7 +13,10 @@ public struct WorkspaceCmdArgs: CmdArgs {
+             "--stdin": optionalTrueBoolFlag(\.explicitStdinFlag),
+             "--no-stdin": optionalFalseBoolFlag(\.explicitStdinFlag),
+         ],
+-        posArgs: [newMandatoryPosArgParser(\.target, parseWorkspaceTarget, placeholder: workspaceTargetPlaceholder)],
++        posArgs: [
++            dashDashArg(mandatory: false),
++            newMandatoryPosArgParser(\.target, parseWorkspaceTarget, placeholder: workspaceTargetPlaceholder),
++        ],
+         conflictingOptions: [
+             ["--stdin", "--no-stdin"],
+         ],
+@@ -63,9 +66,9 @@ public enum WorkspaceTarget: Equatable, Sendable {
+ let workspaceTargetPlaceholder = "(<workspace-name>|next|prev)"
+ 
+ func parseWorkspaceTarget(i: PosArgParserInput) -> ParsedCliArgs<WorkspaceTarget> {
+-    switch i.arg {
+-        case "next": .succ(.relative(.next), advanceBy: 1)
+-        case "prev": .succ(.relative(.prev), advanceBy: 1)
++    switch (i.arg, i.sawDashDash) {
++        case ("next", false): .succ(.relative(.next), advanceBy: 1)
++        case ("prev", false): .succ(.relative(.prev), advanceBy: 1)
+         default: .init(WorkspaceName.parse(i.arg).map(WorkspaceTarget.direct), advanceBy: 1)
+     }
+ }
+diff --git a/Sources/Common/cmdArgs/parseSpecificCmdArgs.swift b/Sources/Common/cmdArgs/parseSpecificCmdArgs.swift
+index 0036f4a0..7f7aca95 100644
+--- a/Sources/Common/cmdArgs/parseSpecificCmdArgs.swift
++++ b/Sources/Common/cmdArgs/parseSpecificCmdArgs.swift
+@@ -5,28 +5,37 @@ func parseSpecificCmdArgs<T: CmdArgs>(_ raw: T, _ args: StrArrSlice) -> ParsedCm
+     var posArgumentParserIndex = 0
+     var options: Set<String> = Set()
+     var index = 0
++    var positionalOnly = false
+ 
+-    while index < args.count {
++    loop: while index < args.count {
+         let arg = args[index]
+-        if arg == "-h" || arg == "--help" {
+-            return .help(T.info.help)
+-        } else if arg.starts(with: "-") && !isResizeNegativeUnitsArg(raw, arg: arg) {
+-            if let optionParser = T.parser.flags[arg] {
+-                index += 1
+-                if !options.insert(arg).inserted {
+-                    errors.append("Duplicated option \(arg.singleQuoted)")
++
++        switch (positionalOnly, arg) {
++            case (false, "-h"), (false, "--help"):
++                return .help(T.info.help)
++            case (false, _) where arg.isCliDashFlag && !isResizeNegativeUnitsArg(raw, arg: arg):
++                if let optionParser = T.parser.flags[arg] {
++                    index += 1
++                    if !options.insert(arg).inserted {
++                        errors.append("Duplicated option \(arg.singleQuoted)")
++                    }
++                    raw = optionParser.transformRaw(raw, &index, SubArgParserInput(superArg: arg, index: index, args: args), &errors)
++                } else {
++                    errors.append("Unknown flag \(arg.singleQuoted)")
++                    break loop
++                }
++            default:
++                if arg == "--" {
++                    positionalOnly = true
++                }
++                if let parser = T.parser.positionalArgs.getOrNil(atIndex: posArgumentParserIndex) {
++                    let input = PosArgParserInput(index: index, args: args, sawDashDash: positionalOnly)
++                    raw = parser.transformRaw(raw, &index, input, &errors)
++                    posArgumentParserIndex += 1
++                } else {
++                    errors.append("Unknown argument \(arg.singleQuoted)")
++                    break loop
+                 }
+-                raw = optionParser.transformRaw(raw, &index, SubArgParserInput(superArg: arg, index: index, args: args), &errors)
+-            } else {
+-                errors.append("Unknown flag \(arg.singleQuoted)")
+-                break
+-            }
+-        } else if let parser = T.parser.positionalArgs.getOrNil(atIndex: posArgumentParserIndex) {
+-            raw = parser.transformRaw(raw, &index, PosArgParserInput(index: index, args: args), &errors)
+-            posArgumentParserIndex += 1
+-        } else {
+-            errors.append("Unknown argument \(arg.singleQuoted)")
+-            break
+         }
+     }
+ 
+diff --git a/Sources/Common/cmdHelpGenerated.swift b/Sources/Common/cmdHelpGenerated.swift
+index 566b32eb..743f8e69 100644
+--- a/Sources/Common/cmdHelpGenerated.swift
++++ b/Sources/Common/cmdHelpGenerated.swift
+@@ -1,5 +1,5 @@
+-// FILE IS GENERATED FROM docs/winmux-*.adoc files
+-// TO REGENERATE THE FILE RUN generate.sh
++// CLI HELP TABLE. The legacy generated filename is retained for source compatibility.
++// Keep usage strings in sync with the command argument manifests.
+ 
+ let balance_sizes_help_generated = """
+     USAGE: balance-sizes [-h|--help] [--workspace <workspace>]
+@@ -16,9 +16,16 @@ let config_help_generated = """
+        OR: config [-h|--help] --all-keys
+        OR: config [-h|--help] --config-path
+     """
++let create_project_help_generated = """
++    USAGE: create-project [-h|--help] [--name <project-name>] [--color <#RRGGBB>] [--json]
++    """
+ let debug_windows_help_generated = """
+     USAGE: debug-windows [-h|--help] [--window-id <window-id>]
+     """
++let delete_project_help_generated = """
++    USAGE: delete-project [-h|--help] --action move-windows-to-fallback --if-window-count <count>
++                          [--json] <project-id>
++    """
+ let enable_help_generated = """
+     USAGE: enable [-h|--help] toggle
+        OR: enable [-h|--help] on [--fail-if-noop]
+@@ -36,7 +43,7 @@ let focus_back_and_forth_help_generated = """
+ let focus_monitor_help_generated = """
+     USAGE: focus-monitor [-h|--help] [--wrap-around] (left|down|up|right)
+        OR: focus-monitor [-h|--help] [--wrap-around] (next|prev)
+-       OR: focus-monitor [-h|--help] <monitor-pattern>...
++       OR: focus-monitor [-h|--help] [--] <monitor-pattern>...
+     """
+ let focus_help_generated = """
+     USAGE: focus [-h|--help] [--ignore-floating] [--wrap-around]
+@@ -76,6 +83,9 @@ let list_modes_help_generated = """
+ let list_monitors_help_generated = """
+     USAGE: list-monitors [-h|--help] [--focused [no]] [--mouse [no]] [--format <output-format>] [--count] [--json]
+     """
++let list_projects_help_generated = """
++    USAGE: list-projects [-h|--help] [--focused [no]] [--visible [no]] [--format <output-format>] [--count] [--json]
++    """
+ let list_windows_help_generated = """
+     USAGE: list-windows [-h|--help] (--workspace <workspace>...|--monitor <monitor>...)
+                         [--monitor <monitor>...] [--workspace <workspace>...]
+@@ -98,7 +108,7 @@ let macos_native_minimize_help_generated = """
+     USAGE: macos-native-minimize [-h|--help] [--window-id <window-id>]
+     """
+ let mode_help_generated = """
+-    USAGE: mode [-h|--help] <binding-mode>
++    USAGE: mode [-h|--help] [--] <binding-mode>
+     """
+ let move_mouse_help_generated = """
+     USAGE: move-mouse [-h|--help] [--fail-if-noop] <mouse-position>
+@@ -107,36 +117,47 @@ let move_node_to_monitor_help_generated = """
+     USAGE: move-node-to-monitor [-h|--help] [--window-id <window-id>] [--focus-follows-window]
+                                 [--wrap-around] (left|down|up|right|next|prev)
+        OR: move-node-to-monitor [-h|--help] [--window-id <window-id>] [--focus-follows-window]
+-                                [--fail-if-noop] <monitor-pattern>...
++                                [--fail-if-noop] [--] <monitor-pattern>...
+     """
+ let move_node_to_project_help_generated = """
+     USAGE: move-node-to-project [-h|--help] [--window-id <window-id>] [--focus-follows-window]
+-                                [--wrap-around] [--fail-if-noop] (<project-index>|next|prev)
++                                [--wrap-around] [--fail-if-noop] (<project-id>|<project-index>|next|prev)
++       OR: move-node-to-project [-h|--help] [--window-id <window-id>] [--focus-follows-window]
++                                [--fail-if-noop] --project-id <project-id>
+     """
+ let move_node_to_workspace_help_generated = """
+     USAGE: move-node-to-workspace [-h|--help] [--focus-follows-window] [--wrap-around]
+                                   [--stdin|--no-stdin]
+                                   (next|prev)
++       OR: move-node-to-workspace [-h|--help] [--focus-follows-window]
++                                  [--window-id <window-id>] new
+        OR: move-node-to-workspace [-h|--help] [--focus-follows-window] [--fail-if-noop]
+-                                  [--window-id <window-id>] <workspace-name>
++                                  [--window-id <window-id>] [--] <workspace-name>
+     """
+ let move_workspace_to_monitor_help_generated = """
+     USAGE: move-workspace-to-monitor [-h|--help] [--workspace <workspace>] [--wrap-around] (left|down|up|right)
+        OR: move-workspace-to-monitor [-h|--help] [--workspace <workspace>] [--wrap-around] (next|prev)
+-       OR: move-workspace-to-monitor [-h|--help] [--workspace <workspace>] <monitor-pattern>...
++       OR: move-workspace-to-monitor [-h|--help] [--workspace <workspace>] [--] <monitor-pattern>...
+     """
+ let move_help_generated = """
+     USAGE: move [-h|--help] [--window-id <window-id>] [--boundaries <boundary>] [--boundaries-action <boundary-action>] (left|down|up|right)
+     """
+ let project_help_generated = """
+-    USAGE: project [-h|--help] [--wrap-around] [--fail-if-noop] (<project-index>|next|prev)
++    USAGE: project [-h|--help] [--wrap-around] [--fail-if-noop] (<project-id>|<project-index>|next|prev)
++       OR: project [-h|--help] [--fail-if-noop] --project-id <project-id>
+     """
+ let reload_config_help_generated = """
+     USAGE: reload-config [-h|--help] [--no-gui] [--dry-run]
+     """
++let rename_project_help_generated = """
++    USAGE: rename-project [-h|--help] [--fail-if-noop] [--json] <project-id> <project-name>
++    """
+ let resize_help_generated = """
+     USAGE: resize [-h|--help] [--window-id <window-id>] (smart|smart-opposite|width|height) [+|-]<number>
+     """
++let set_project_color_help_generated = """
++    USAGE: set-project-color [-h|--help] [--fail-if-noop] [--json] <project-id> (<#RRGGBB>|auto)
++    """
+ let split_help_generated = """
+     USAGE: split [-h|--help] [--window-id <window-id>] (horizontal|vertical|opposite)
+     """
+@@ -147,7 +168,7 @@ let subscribe_help_generated = """
+     USAGE: subscribe [-h|--help] [--all] [--no-send-initial] [<event>...]
+     """
+ let summon_workspace_help_generated = """
+-    USAGE: summon-workspace [-h|--help] [--fail-if-noop] <workspace>
++    USAGE: summon-workspace [-h|--help] [--fail-if-noop] [--] <workspace>
+     """
+ let swap_help_generated = """
+     USAGE: swap [-h|--help] [--window-id <window-id>] [--swap-focus]
+@@ -155,7 +176,7 @@ let swap_help_generated = """
+                 (left|down|up|right|dfs-next|dfs-prev)
+     """
+ let trigger_binding_help_generated = """
+-    USAGE: trigger-binding [-h|--help] <binding> --mode <mode-id>
++    USAGE: trigger-binding [-h|--help] --mode <mode-id> [--] <binding>
+     """
+ let volume_help_generated = """
+     USAGE: volume [-h|--help] (up|down) [--no-gui]
+@@ -166,6 +187,6 @@ let workspace_back_and_forth_help_generated = """
+     USAGE: workspace-back-and-forth [-h|--help]
+     """
+ let workspace_help_generated = """
+-    USAGE: workspace [-h|--help] [--auto-back-and-forth] [--fail-if-noop] <workspace-name>
++    USAGE: workspace [-h|--help] [--auto-back-and-forth] [--fail-if-noop] [--] <workspace-name>
+        OR: workspace [-h|--help] [--wrap-around] [--stdin|--no-stdin] (next|prev)
+     """
+diff --git a/Sources/Common/model/clientServer.swift b/Sources/Common/model/clientServer.swift
+index c581ece3..bec879e0 100644
+--- a/Sources/Common/model/clientServer.swift
++++ b/Sources/Common/model/clientServer.swift
+@@ -1,8 +1,19 @@
+ import Foundation
+ 
+-// TO EVERYONE REVERSE-ENGINEERING THE PROTOCOL
+-// client-server socket API is not public yet.
+-// Tracking issue for making it public: https://github.com/nikitabobko/WinMux/issues/1513
++/// Version of the framing protocol spoken on the WinMux Unix socket.
++///
++/// This is independent from the app version and Git hash. Bump it only when a
++/// client and server can no longer communicate using the existing wire format.
++public let SOCKET_PROTOCOL_VERSION: UInt32 = 1
++
++/// Maximum JSON payload size for a single framed socket message.
++///
++/// The official CLI accepts at most 16 MiB of UTF-8 stdin. JSON can expand an
++/// ASCII control character to a six-byte `\u00XX` escape, so 128 MiB leaves
++/// headroom above the roughly 96 MiB worst-case stdin encoding and its request
++/// envelope.
++public let MAX_SOCKET_FRAME_BYTES: UInt32 = 128 * 1024 * 1024
++
+ public struct ServerAnswer: Codable, Sendable {
+     public let exitCode: Int32
+     public let stdout: String
+@@ -22,9 +33,6 @@ public struct ServerAnswer: Codable, Sendable {
+     }
+ }
+ 
+-// TO EVERYONE REVERSE-ENGINEERING THE PROTOCOL
+-// client-server socket API is not public yet.
+-// Tracking issue for making it public: https://github.com/nikitabobko/WinMux/issues/1513
+ public struct ClientRequest: Codable, Sendable, ConvenienceCopyable, Equatable {
+     // periphery:ignore - Unused. keep it for API compatibility with old servers for a couple of version
+     public var command: String? = nil
+diff --git a/Sources/Common/util/NWConnectionEx.swift b/Sources/Common/util/NWConnectionEx.swift
+index c9f6237e..87ea97d1 100644
+--- a/Sources/Common/util/NWConnectionEx.swift
++++ b/Sources/Common/util/NWConnectionEx.swift
+@@ -1,5 +1,5 @@
+-import Network
+ import Foundation
++import Network
+ 
+ extension NWConnection {
+     public func writeAtomic(_ msg: Codable, _ encoder: JSONEncoder = JSONEncoder()) async -> ((), error: NWError?) {
+@@ -42,6 +42,70 @@ extension NWConnection {
+         }
+     }
+ 
++    /// Starts a client connection and performs the one-shot socket protocol
++    /// handshake before any framed JSON is exchanged.
++    public func initConnection(handshakeTimeout: Duration = .seconds(2)) async -> ((), error: InitConnectionError?) {
++        if let error = await startBlocking().error {
++            return ((), .nwError(error))
++        }
++
++        if let error = await writeUInt32(SOCKET_PROTOCOL_VERSION).error {
++            return ((), .nwError(error))
++        }
++
++        let deadline = HandshakeDeadline()
++        let timeoutTask = Task<Void, Never> {
++            do {
++                try await Task.sleep(for: handshakeTimeout)
++            } catch {
++                return
++            }
++            if await deadline.timeOutIfPending() {
++                self.cancel()
++            }
++        }
++
++        let serverVersionResult = await readUInt32()
++        let didTimeOut = await deadline.finish()
++        timeoutTask.cancel()
++
++        if didTimeOut {
++            return (
++                (),
++                .customError(
++                    """
++                    Timed out while negotiating the WinMux socket protocol.
++                    The running WinMux.app may use the legacy pre-handshake protocol. Update and restart WinMux.app and the winmux CLI together.
++                    """,
++                ),
++            )
++        }
++
++        switch serverVersionResult {
++            case .success(let serverVersion) where serverVersion != SOCKET_PROTOCOL_VERSION:
++                return (
++                    (),
++                    .customError(
++                        """
++                        Client SOCKET_PROTOCOL_VERSION: \(SOCKET_PROTOCOL_VERSION)
++                        Server SOCKET_PROTOCOL_VERSION: \(serverVersion)
++
++                        The client and server protocols are incompatible. Install WinMux.app and the winmux CLI as a matched pair, then restart WinMux.
++                        """,
++                    ),
++                )
++            case .success:
++                return ((), nil)
++            case .failure(let error):
++                return ((), .nwError(error))
++        }
++    }
++
++    public enum InitConnectionError: Sendable {
++        case nwError(NWError)
++        case customError(String)
++    }
++
+     private func read(bytes size: Int) async -> Result<Data, NWError> {
+         var data = Data(capacity: size)
+         while data.count < size {
+@@ -50,8 +114,13 @@ extension NWConnection {
+                 receive(minimumIncompleteLength: remaining, maximumLength: remaining) { data, context, isComplete, error in
+                     if let error {
+                         cont.resume(returning: .failure(error))
++                    } else if let data, !data.isEmpty {
++                        cont.resume(returning: .success(data))
+                     } else {
+-                        cont.resume(returning: .success(data ?? Data()))
++                        // Network.framework represents an orderly peer close as
++                        // an empty successful read. Treat it as EOF instead of
++                        // spinning forever without making progress.
++                        cont.resume(returning: .failure(.posix(.ECONNRESET)))
+                     }
+                 }
+             }
+@@ -74,10 +143,30 @@ extension NWConnection {
+         }
+     }
+ 
++    public func readUInt32() async -> Result<UInt32, NWError> {
++        await read(bytes: 4).map { data in
++            data.withUnsafeBytes { $0.load(as: UInt32.self) }
++        }
++    }
++
++    public func writeUInt32(_ int: UInt32) async -> ((), error: NWError?) {
++        let data = withUnsafeBytes(of: int) { Data($0) }
++        check(data.count == 4)
++        return await withCheckedContinuation { cont in
++            send(content: data, completion: .contentProcessed { error in
++                cont.resume(returning: ((), error))
++            })
++        }
++    }
++
+     public func readNonAtomic() async -> Result<Data, NWError> {
+-        switch await read(bytes: 4) {
+-            case .success(let header):
+-                let count = header.withUnsafeBytes { $0.load(as: UInt32.self) }
++        switch await readUInt32() {
++            case .success(let count):
++                // Validate the peer-controlled length before read(bytes:)
++                // reserves storage for the payload.
++                guard count <= MAX_SOCKET_FRAME_BYTES else {
++                    return .failure(.posix(.EMSGSIZE))
++                }
+                 return await read(bytes: Int(count))
+             case .failure(let e):
+                 return .failure(e)
+@@ -94,3 +183,31 @@ private actor IsDone {
+         return (old, ())
+     }
+ }
++
++private actor HandshakeDeadline {
++    private enum State {
++        case pending
++        case finished
++        case timedOut
++    }
++
++    private var state: State = .pending
++
++    func timeOutIfPending() -> Bool {
++        guard state == .pending else { return false }
++        state = .timedOut
++        return true
++    }
++
++    func finish() -> Bool {
++        switch state {
++            case .pending:
++                state = .finished
++                return false
++            case .finished:
++                return false
++            case .timedOut:
++                return true
++        }
++    }
++}
+diff --git a/Sources/Common/util/WinMuxAny.swift b/Sources/Common/util/WinMuxAny.swift
+index d3e552dd..132b3db4 100644
+--- a/Sources/Common/util/WinMuxAny.swift
++++ b/Sources/Common/util/WinMuxAny.swift
+@@ -20,6 +20,11 @@ extension WinMuxAny {
+ 
+     @inlinable public func takeIf(_ predicate: (Self) -> Bool) -> Self? { predicate(self) ? self : nil }
+     @inlinable public func then<R>(_ body: (Self) -> R) -> R { body(self) }
++
++    var noopKeyPath: () {
++        get { () }
++        set {} // swiftlint:disable:this unused_setter_value
++    }
+ }
+ 
+ extension Int: WinMuxAny {}
+diff --git a/makefile b/makefile
+index d4f97ab6..f04d93ff 100644
+--- a/makefile
++++ b/makefile
+@@ -2,17 +2,24 @@ VERSION ?= 0.0.0-SNAPSHOT
+ CODESIGN_IDENTITY ?= Apple Development
+ EXPECTED_CODESIGN_AUTHORITY_PREFIX ?= Authority=Apple Development:
+ DEVELOPMENT_TEAM ?= W9C2P3N7Q2
++CODESIGN_STYLE ?= Automatic
+ NOTARIZE ?= 0
+ NOTARYTOOL_PROFILE ?= winmux
++GENERATE_APPCAST ?= 0
++ALLOW_APP_ONLY_PROTOCOL_UPDATE ?= 0
+ RELEASE_DIR ?= .release
+ RELEASE_TAG ?= v$(VERSION)
+ RELEASE_NOTES ?= auto
+-PUBLISH ?= 1
++PUBLISH ?= 0
+ APP_INSTALL_DIR ?= /Applications
++CLI_STAGE_PATH ?= $(RELEASE_DIR)/winmux
++LOCAL_INSTALL_ROOT ?= $(CURDIR)/.local/install
++INSTALL_LOCK_HELD ?= 0
++LAUNCH_AFTER_INSTALL ?= 1
+ SPARKLE_PUBLIC_KEY ?= kcc3956V3+Yo8GtwFJ8Odb9sphIr09/9dsuoYBNtxf0=
+ ARGS ?=
+ 
+-.PHONY: generate xcodeproj build build-clean run run-clean cli release install installed clean
++.PHONY: generate xcodeproj build build-clean run run-clean cli cli-release release install install-staged verify-installed installed clean
+ 
+ generate:
+ 	/bin/bash -lc 'cd "$(CURDIR)" && \
+@@ -83,8 +90,31 @@ cli:
+ 	$(MAKE) build VERSION="$(VERSION)"
+ 	/bin/bash -lc 'cd "$(CURDIR)" && exec ./.debug/winmux $(ARGS)'
+ 
++cli-release:
++	$(MAKE) generate VERSION="$(VERSION)"
++	/bin/bash -lc 'cd "$(CURDIR)" && \
++	set -euo pipefail && \
++	source ./script/setup.sh && \
++	swift build -c release --arch arm64 --arch x86_64 --product winmux -Xswiftc -warnings-as-errors && \
++	cli_build_dir="$$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path | /usr/bin/tail -n 1)" && \
++	cli_stage_path="$(CLI_STAGE_PATH)" && \
++	test -x "$$cli_build_dir/winmux" && \
++	mkdir -p "$$(dirname "$$cli_stage_path")" && \
++	/usr/bin/install -m 755 "$$cli_build_dir/winmux" "$$cli_stage_path" && \
++	/usr/bin/codesign --force --sign "$(CODESIGN_IDENTITY)" "$$cli_stage_path" && \
++	/usr/bin/codesign --verify --strict --verbose=2 "$$cli_stage_path" && \
++	archs="$$(/usr/bin/lipo -archs "$$cli_stage_path")" && \
++	case " $$archs " in *" arm64 "*) ;; *) echo "CLI is missing arm64" >&2; exit 1;; esac && \
++	case " $$archs " in *" x86_64 "*) ;; *) echo "CLI is missing x86_64" >&2; exit 1;; esac'
++
+ release:
++	@if [ "$(GENERATE_APPCAST)" = "1" ] && [ "$(ALLOW_APP_ONLY_PROTOCOL_UPDATE)" != "1" ]; then \
++	    echo "Refusing to generate an app-only Sparkle update during the socket protocol-v1 migration." >&2; \
++	    echo "Distribute WinMux.app and bin/winmux together, or explicitly set ALLOW_APP_ONLY_PROTOCOL_UPDATE=1." >&2; \
++	    exit 1; \
++	fi
+ 	$(MAKE) xcodeproj VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)"
++	$(MAKE) cli-release VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" CLI_STAGE_PATH="$(CLI_STAGE_PATH)"
+ 	/bin/bash -lc 'cd "$(CURDIR)" && \
+ 	set -euo pipefail && \
+ 	source ./script/setup.sh && \
+@@ -95,9 +125,12 @@ release:
+ 	derived_data_path="$$release_dir/$$app_name-$(VERSION).deriveddata"; \
+ 	app_path="$$archive_path/Products/Applications/$$app_name.app"; \
+ 	zip_path="$$release_dir/$$app_name-$(VERSION).zip"; \
++	dist_path="$$release_dir/$$app_name-$(VERSION)-macOS"; \
++	dist_zip_path="$$release_dir/$$app_name-$(VERSION)-macOS.zip"; \
+ 	appcast_path="$$release_dir/appcast.xml"; \
+ 	log_path="$$release_dir/$$app_name-$(VERSION)-xcodebuild.log"; \
+-	rm -rf "$$archive_path" "$$zip_path" "$$appcast_path" "$$derived_data_path"; \
++	cli_path="$(CLI_STAGE_PATH)"; \
++	rm -rf "$$archive_path" "$$zip_path" "$$dist_path" "$$dist_zip_path" "$$appcast_path" "$$derived_data_path"; \
+ 	mkdir -p "$$release_dir"; \
+ 	xcodebuild-pretty "$$log_path" \
+ 	    -project WinMux.xcodeproj \
+@@ -107,16 +140,36 @@ release:
+ 	    -derivedDataPath "$$derived_data_path" \
+ 	    CODE_SIGN_IDENTITY="$(CODESIGN_IDENTITY)" \
+ 	    DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" \
+-	    CODE_SIGN_STYLE=Automatic \
++	    CODE_SIGN_STYLE="$(CODESIGN_STYLE)" \
+ 	    archive; \
+ 	test -d "$$app_path"; \
++	test -x "$$cli_path"; \
+ 	codesign --verify --deep --strict --verbose=2 "$$app_path"; \
+-	codesign -dv --verbose=4 "$$app_path" 2>&1 | grep -F "$(EXPECTED_CODESIGN_AUTHORITY_PREFIX)" >/dev/null; \
++	app_archs="$$(/usr/bin/lipo -archs "$$app_path/Contents/MacOS/$$app_name")"; \
++	case " $$app_archs " in *" arm64 "*) ;; *) echo "App is missing arm64" >&2; exit 1;; esac; \
++	case " $$app_archs " in *" x86_64 "*) ;; *) echo "App is missing x86_64" >&2; exit 1;; esac; \
++	expected_authority="$(EXPECTED_CODESIGN_AUTHORITY_PREFIX)"; \
++	if [ -n "$$expected_authority" ]; then \
++	    codesign -dv --verbose=4 "$$app_path" 2>&1 | grep -F "$$expected_authority" >/dev/null; \
++	    codesign -dv --verbose=4 "$$cli_path" 2>&1 | grep -F "$$expected_authority" >/dev/null; \
++	fi; \
++	generated_version="$$(sed -n '\''s/^public let winMuxAppVersion = "\(.*\)"/\1/p'\'' Sources/Common/versionGenerated.swift)"; \
++	generated_hash="$$(sed -n '\''s/^public let gitHash = "\(.*\)"/\1/p'\'' Sources/Common/gitHashGenerated.swift)"; \
++	test "$$generated_version" = "$(VERSION)"; \
++	test -n "$$generated_hash"; \
++	strings "$$app_path/Contents/MacOS/$$app_name" | grep -F -x "$$generated_version" >/dev/null; \
++	strings "$$cli_path" | grep -F -x "$$generated_version" >/dev/null; \
++	strings "$$app_path/Contents/MacOS/$$app_name" | grep -F -x "$$generated_hash" >/dev/null; \
++	strings "$$cli_path" | grep -F -x "$$generated_hash" >/dev/null; \
+ 	ditto -c -k --sequesterRsrc --keepParent "$$app_path" "$$zip_path"; \
+-	sparkle_appcast="$$(find "$$derived_data_path/SourcePackages/artifacts" -type f -name generate_appcast -print -quit)"; \
+-	test -n "$$sparkle_appcast"; \
+-	"$$sparkle_appcast" --download-url-prefix "https://github.com/ZimengXiong/winmux/releases/download/$(RELEASE_TAG)/" "$$release_dir"; \
+-	test -f "$$appcast_path"; \
++	if [ "$(GENERATE_APPCAST)" = "1" ]; then \
++	    sparkle_appcast="$$(find "$$derived_data_path/SourcePackages/artifacts" -type f -name generate_appcast -print -quit)"; \
++	    test -n "$$sparkle_appcast"; \
++	    "$$sparkle_appcast" --download-url-prefix "https://github.com/ZimengXiong/winmux/releases/download/$(RELEASE_TAG)/" "$$release_dir"; \
++	    test -f "$$appcast_path"; \
++	else \
++	    echo "Skipping appcast generation because GENERATE_APPCAST=$(GENERATE_APPCAST)"; \
++	fi; \
+ 	if [ "$(NOTARIZE)" = "1" ]; then \
+ 	    test -n "$(NOTARYTOOL_PROFILE)"; \
+ 	    xcrun notarytool submit "$$zip_path" --keychain-profile "$(NOTARYTOOL_PROFILE)" --wait; \
+@@ -129,16 +182,25 @@ release:
+ 	else \
+ 	    echo "Skipping notarization because NOTARIZE=$(NOTARIZE)"; \
+ 	fi; \
+-	if [ "$(PUBLISH)" != "1" ]; then \
++	mkdir -p "$$dist_path/bin"; \
++	ditto "$$app_path" "$$dist_path/$$app_name.app"; \
++	/usr/bin/install -m 755 "$$cli_path" "$$dist_path/bin/winmux"; \
++	codesign --verify --deep --strict --verbose=2 "$$dist_path/$$app_name.app"; \
++	codesign --verify --strict --verbose=2 "$$dist_path/bin/winmux"; \
++	ditto -c -k --sequesterRsrc --keepParent "$$dist_path" "$$dist_zip_path"; \
++	if [ "$(PUBLISH)" = "1" ] && [ "$(GENERATE_APPCAST)" != "1" ]; then \
++	    echo "Publishing requires GENERATE_APPCAST=1" >&2; \
++	    exit 1; \
++	elif [ "$(PUBLISH)" != "1" ]; then \
+ 	    echo "Skipping GitHub release publish because PUBLISH=$(PUBLISH)"; \
+ 	elif /usr/bin/which gh >/dev/null 2>&1; then \
+ 	    if gh release view "$(RELEASE_TAG)" >/dev/null 2>&1; then \
+-	        gh release upload "$(RELEASE_TAG)" "$$zip_path" "$$appcast_path" --clobber; \
++	        gh release upload "$(RELEASE_TAG)" "$$zip_path" "$$dist_zip_path" "$$appcast_path" --clobber; \
+ 	    else \
+ 	        if [ "$(RELEASE_NOTES)" = "auto" ]; then \
+-	            gh release create "$(RELEASE_TAG)" "$$zip_path" "$$appcast_path" --title "$$app_name $(VERSION)" --generate-notes; \
++	            gh release create "$(RELEASE_TAG)" "$$zip_path" "$$dist_zip_path" "$$appcast_path" --title "$$app_name $(VERSION)" --generate-notes; \
+ 	        else \
+-	            gh release create "$(RELEASE_TAG)" "$$zip_path" "$$appcast_path" --title "$$app_name $(VERSION)" --notes "$(RELEASE_NOTES)"; \
++	            gh release create "$(RELEASE_TAG)" "$$zip_path" "$$dist_zip_path" "$$appcast_path" --title "$$app_name $(VERSION)" --notes "$(RELEASE_NOTES)"; \
+ 	        fi; \
+ 	    fi; \
+ 	else \
+@@ -146,21 +208,209 @@ release:
+ 	fi'
+ 
+ install:
+-	$(MAKE) release VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" PUBLISH=0
++	/bin/bash -lc 'cd "$(CURDIR)" && \
++	set -euo pipefail && \
++	local_install_root="$(LOCAL_INSTALL_ROOT)"; \
++	mkdir -p "$$local_install_root"; \
++	install_lock="$$local_install_root/.install.lock"; \
++	if ! mkdir "$$install_lock" 2>/dev/null; then \
++	    echo "Another WinMux build or install is already in progress: $$install_lock" >&2; \
++	    exit 1; \
++	fi; \
++	cleanup_install_lock() { rmdir "$$install_lock" >/dev/null 2>&1 || true; }; \
++	trap cleanup_install_lock EXIT; \
++	$(MAKE) release VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" GENERATE_APPCAST=0 PUBLISH=0; \
++	$(MAKE) install-staged VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" CLI_STAGE_PATH="$(CLI_STAGE_PATH)" LOCAL_INSTALL_ROOT="$(LOCAL_INSTALL_ROOT)" APP_INSTALL_DIR="$(APP_INSTALL_DIR)" INSTALL_LOCK_HELD=1 LAUNCH_AFTER_INSTALL="$(LAUNCH_AFTER_INSTALL)"'
++
++install-staged:
+ 	/bin/bash -lc 'cd "$(CURDIR)" && \
+ 	set -euo pipefail && \
+ 	app_name="WinMux"; \
+ 	release_dir="$(RELEASE_DIR)"; \
+ 	app_path="$$release_dir/$$app_name-$(VERSION).xcarchive/Products/Applications/$$app_name.app"; \
++	cli_path="$(CLI_STAGE_PATH)"; \
++	dist_zip_path="$$release_dir/$$app_name-$(VERSION)-macOS.zip"; \
++	local_install_root="$(LOCAL_INSTALL_ROOT)"; \
+ 	install_dir="$(APP_INSTALL_DIR)"; \
+ 	install_path="$$install_dir/$$app_name.app"; \
+ 	test -d "$$app_path"; \
++	test -x "$$cli_path"; \
++	test -f "$$dist_zip_path"; \
++	dist_hash="$$(/usr/bin/shasum -a 256 "$$dist_zip_path" | /usr/bin/awk '\''{print $$1}'\'')"; \
++	release_id="$(VERSION)-$$dist_hash"; \
++	releases_dir="$$local_install_root/releases"; \
++	pair_path="$$releases_dir/$$release_id"; \
++	mkdir -p "$$releases_dir"; \
++	if [ "$(INSTALL_LOCK_HELD)" != "1" ]; then \
++	    install_lock="$$local_install_root/.install.lock"; \
++	    if ! mkdir "$$install_lock" 2>/dev/null; then \
++	        echo "Another WinMux install is already in progress: $$install_lock" >&2; \
++	        exit 1; \
++	    fi; \
++	    cleanup_install_lock() { rmdir "$$install_lock" >/dev/null 2>&1 || true; }; \
++	    trap cleanup_install_lock EXIT; \
++	fi; \
++	if [ ! -d "$$pair_path" ]; then \
++	    staging_path="$$(/usr/bin/mktemp -d "$$local_install_root/.staging.XXXXXX")"; \
++	    mkdir -p "$$staging_path/bin"; \
++	    ditto "$$app_path" "$$staging_path/$$app_name.app"; \
++	    /usr/bin/install -m 755 "$$cli_path" "$$staging_path/bin/winmux"; \
++	    mv "$$staging_path" "$$pair_path"; \
++	fi; \
++	test -d "$$pair_path/$$app_name.app"; \
++	test -x "$$pair_path/bin/winmux"; \
++	codesign --verify --deep --strict --verbose=2 "$$pair_path/$$app_name.app"; \
++	codesign --verify --strict --verbose=2 "$$pair_path/bin/winmux"; \
++	cmp -s "$$pair_path/$$app_name.app/Contents/MacOS/$$app_name" "$$app_path/Contents/MacOS/$$app_name"; \
++	cmp -s "$$pair_path/bin/winmux" "$$cli_path"; \
++	for executable in "$$pair_path/$$app_name.app/Contents/MacOS/$$app_name" "$$pair_path/bin/winmux"; do \
++	    archs="$$(/usr/bin/lipo -archs "$$executable")"; \
++	    case " $$archs " in *" arm64 "*) ;; *) echo "$$executable is missing arm64" >&2; exit 1;; esac; \
++	    case " $$archs " in *" x86_64 "*) ;; *) echo "$$executable is missing x86_64" >&2; exit 1;; esac; \
++	done; \
+ 	mkdir -p "$$install_dir"; \
+-	osascript -e "tell application \"$$app_name\" to quit" >/dev/null 2>&1 || true; \
+-	rm -rf "$$install_path"; \
+-	ditto "$$app_path" "$$install_path"; \
++	current_path="$$local_install_root/current"; \
++	if [ -e "$$current_path" ] && [ ! -L "$$current_path" ]; then \
++	    echo "Refusing to replace non-symlink: $$current_path" >&2; \
++	    exit 1; \
++	fi; \
++	old_current="$$(readlink "$$current_path" 2>/dev/null || true)"; \
++	next_path="$$install_dir/.$$app_name.app.next.$$$$"; \
++	backup_path="$$install_dir/.$$app_name.app.rollback.$$(date +%Y%m%d%H%M%S).$$$$"; \
++	current_next="$$local_install_root/.current.$$$$"; \
++	rm -rf "$$next_path"; \
++	ditto "$$pair_path/$$app_name.app" "$$next_path"; \
++	codesign --verify --deep --strict --verbose=2 "$$next_path"; \
++	was_running=0; \
++	if pgrep -x "$$app_name" >/dev/null 2>&1; then \
++	    was_running=1; \
++	    if [ "$(LAUNCH_AFTER_INSTALL)" = "1" ]; then \
++	        osascript -e "tell application \"$$app_name\" to quit" >/dev/null 2>&1 || true; \
++	    else \
++	        pkill -TERM -x "$$app_name" >/dev/null 2>&1 || true; \
++	    fi; \
++	fi; \
++	for attempt in $$(seq 1 100); do \
++	    if ! pgrep -x "$$app_name" >/dev/null 2>&1; then break; fi; \
++	    sleep 0.1; \
++	done; \
++	if pgrep -x "$$app_name" >/dev/null 2>&1; then \
++	    echo "WinMux did not quit; leaving the installed app untouched" >&2; \
++	    rm -rf "$$next_path"; \
++	    exit 1; \
++	fi; \
++	had_previous=0; \
++	if [ -e "$$install_path" ]; then \
++	    mv "$$install_path" "$$backup_path"; \
++	    had_previous=1; \
++	fi; \
++	if ! mv "$$next_path" "$$install_path"; then \
++	    if [ "$$had_previous" = 1 ]; then \
++	        mv "$$backup_path" "$$install_path"; \
++	        if [ "$(LAUNCH_AFTER_INSTALL)" = "1" ]; then open "$$install_path" >/dev/null 2>&1 || true; fi; \
++	    fi; \
++	    exit 1; \
++	fi; \
++	if ! ln -s "$$pair_path" "$$current_next"; then \
++	    mv "$$install_path" "$$next_path"; \
++	    if [ "$$had_previous" = 1 ]; then \
++	        mv "$$backup_path" "$$install_path"; \
++	        if [ "$(LAUNCH_AFTER_INSTALL)" = "1" ]; then open "$$install_path" >/dev/null 2>&1 || true; fi; \
++	    fi; \
++	    rm -rf "$$next_path"; \
++	    exit 1; \
++	fi; \
++	if ! mv -fh "$$current_next" "$$current_path"; then \
++	    mv "$$install_path" "$$next_path"; \
++	    if [ "$$had_previous" = 1 ]; then \
++	        mv "$$backup_path" "$$install_path"; \
++	        if [ "$(LAUNCH_AFTER_INSTALL)" = "1" ]; then open "$$install_path" >/dev/null 2>&1 || true; fi; \
++	    fi; \
++	    rm -rf "$$next_path"; \
++	    exit 1; \
++	fi; \
+ 	xattr -dr com.apple.quarantine "$$install_path" >/dev/null 2>&1 || true; \
+-	open "$$install_path"'
++	generated_hash="$$(sed -n '\''s/^public let gitHash = "\(.*\)"/\1/p'\'' Sources/Common/gitHashGenerated.swift)"; \
++	if [ "$(LAUNCH_AFTER_INSTALL)" != "1" ]; then \
++	    echo "Installed matching WinMux app and CLI on disk: $(VERSION) $$generated_hash"; \
++	    echo "Launch and live client/server verification were deliberately skipped."; \
++	    if [ "$$had_previous" = 1 ]; then echo "Rollback app preserved at $$backup_path"; fi; \
++	    exit 0; \
++	fi; \
++	ready=0; \
++	if launch_error="$$(open "$$install_path" 2>&1)"; then \
++	    for attempt in $$(seq 1 100); do \
++	        version_output="$$("$$current_path/bin/winmux" --version 2>&1 || true)"; \
++	        if printf "%s\n" "$$version_output" | grep -F "winmux CLI client version: $(VERSION) $$generated_hash" >/dev/null && \
++	           printf "%s\n" "$$version_output" | grep -F "WinMux.app server version: $(VERSION) $$generated_hash" >/dev/null; then \
++	            ready=1; \
++	            break; \
++	        fi; \
++	        sleep 0.1; \
++	    done; \
++	else \
++	    version_output="Failed to launch $$install_path: $$launch_error"; \
++	fi; \
++	if [ "$$ready" != 1 ]; then \
++	    if [ "$(CODESIGN_IDENTITY)" = "-" ]; then \
++	        echo "Installed the ad-hoc-signed WinMux app and CLI, but the pair has not passed its readiness check." >&2; \
++	        echo "Accessibility approval is commonly required after an ad-hoc signature changes; a launch, config, or protocol failure can produce the same symptom." >&2; \
++	        open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" >/dev/null 2>&1 || true; \
++	        echo "After WinMux is enabled and relaunched, run: make verify-installed" >&2; \
++	        if [ "$$had_previous" = 1 ]; then echo "Rollback app preserved at $$backup_path" >&2; fi; \
++	        exit 75; \
++	    fi; \
++	    echo "Installed WinMux failed the client/server version check; rolling back" >&2; \
++	    osascript -e "tell application \"$$app_name\" to quit" >/dev/null 2>&1 || true; \
++	    for attempt in $$(seq 1 100); do \
++	        if ! pgrep -x "$$app_name" >/dev/null 2>&1; then break; fi; \
++	        sleep 0.1; \
++	    done; \
++	    if pgrep -x "$$app_name" >/dev/null 2>&1; then \
++	        echo "Failed WinMux process did not quit; refusing to move a live app bundle during rollback" >&2; \
++	        echo "New pair remains installed; rollback app remains at $$backup_path" >&2; \
++	        exit 1; \
++	    fi; \
++	    failed_path="$$install_dir/.$$app_name.app.failed.$$(date +%Y%m%d%H%M%S).$$$$"; \
++	    mv "$$install_path" "$$failed_path"; \
++	    if [ "$$had_previous" = 1 ]; then mv "$$backup_path" "$$install_path"; fi; \
++	    restore_link="$$local_install_root/.current-restore.$$$$"; \
++	    if [ -n "$$old_current" ]; then \
++	        ln -s "$$old_current" "$$restore_link"; \
++	        mv -fh "$$restore_link" "$$current_path"; \
++	    else \
++	        rm -f "$$current_path"; \
++	    fi; \
++	    if [ "$$had_previous" = 1 ]; then open "$$install_path"; fi; \
++	    echo "Failed build preserved at $$failed_path" >&2; \
++	    exit 1; \
++	fi; \
++	echo "Installed matching WinMux app and CLI: $$version_output"; \
++	if [ "$$had_previous" = 1 ]; then echo "Rollback app preserved at $$backup_path"; fi'
++
++verify-installed:
++	/bin/bash -lc 'cd "$(CURDIR)" && \
++	set -euo pipefail && \
++	current_path="$(LOCAL_INSTALL_ROOT)/current"; \
++	install_path="$(APP_INSTALL_DIR)/WinMux.app"; \
++	test -L "$$current_path"; \
++	test -x "$$current_path/bin/winmux"; \
++	test -d "$$install_path"; \
++	/usr/bin/codesign --verify --deep --strict --verbose=2 "$$install_path"; \
++	/usr/bin/codesign --verify --strict --verbose=2 "$$current_path/bin/winmux"; \
++	if ! version_output="$$("$$current_path/bin/winmux" --version 2>&1)"; then \
++	    printf "%s\n" "$$version_output" >&2; \
++	    echo "Installed WinMux CLI could not negotiate with the running app" >&2; \
++	    exit 1; \
++	fi; \
++	client_version="$$(printf "%s\n" "$$version_output" | /usr/bin/sed -n '\''s/^winmux CLI client version: //p'\'')"; \
++	server_version="$$(printf "%s\n" "$$version_output" | /usr/bin/sed -n '\''s/^WinMux.app server version: //p'\'')"; \
++	if [ -z "$$client_version" ] || [ "$$client_version" != "$$server_version" ]; then \
++	    printf "%s\n" "$$version_output" >&2; \
++	    echo "Installed WinMux app and CLI did not report the same build identity" >&2; \
++	    exit 1; \
++	fi; \
++	printf "%s\n" "$$version_output"'
+ 
+ installed: install
+ 
+diff --git a/resources/default-config.toml b/resources/default-config.toml
+index ddf36338..47478d7e 100644
+--- a/resources/default-config.toml
++++ b/resources/default-config.toml
+@@ -39,6 +39,9 @@ on-mode-changed = []
+ 
+ [workspace-sidebar]
+     enabled = true
++    # Keep the sidebar above system UI such as the Dock. Set false to keep it
++    # above ordinary app windows while allowing the Dock to appear over it.
++    stay-on-top = true
+     # Hide the compact rail until the pointer reaches the display's left edge.
+     auto-hide = false
+     # Keep the full sidebar open and reserve its width for tiled windows.

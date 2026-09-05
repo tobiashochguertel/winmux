@@ -392,6 +392,8 @@ def generate(
 
     # Generate patch
     patch_content = _generate_patch(repo, merge_base, branch, modified)
+    if patch_content and not patch_content.endswith("\n"):
+        patch_content += "\n"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(patch_content)
     console.print(f"[green]Written:[/green] {output} ({len(patch_content)} bytes)")

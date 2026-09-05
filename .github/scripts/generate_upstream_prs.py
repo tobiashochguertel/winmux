@@ -47,13 +47,73 @@ OUTPUT_FILE = Path(".github/UPSTREAM-PRS.md")
 DEFAULT_CONFIG_FILE = Path(".github/pr-catalog.yaml")
 
 # Files we already patch in this fork — PRs touching these get elevated risk
-PATCHED_FILES = set()
+PATCHED_FILES = {
+    "Package.swift",
+    "README.md",
+    "Sources/AppBundle/command/Command.swift",
+    "Sources/AppBundle/command/cmdManifest.swift",
+    "Sources/AppBundle/command/format.swift",
+    "Sources/AppBundle/command/impl/MoveNodeToProjectCommand.swift",
+    "Sources/AppBundle/command/impl/MoveNodeToWorkspaceCommand.swift",
+    "Sources/AppBundle/command/impl/ProjectCommand.swift",
+    "Sources/AppBundle/command/impl/agent/AgentCommand.swift",
+    "Sources/AppBundle/command/impl/agent/AgentRequest.swift",
+    "Sources/AppBundle/command/impl/agent/AgentSnapshot.swift",
+    "Sources/AppBundle/command/impl/agent/AgentWorldId.swift",
+    "Sources/AppBundle/config/Config.swift",
+    "Sources/AppBundle/config/parseWorkspaceSidebar.swift",
+    "Sources/AppBundle/server.swift",
+    "Sources/AppBundle/tree/WinMuxWorkspaceState.swift",
+    "Sources/AppBundle/tree/Workspace.swift",
+    "Sources/AppBundle/tree/WorkspaceProjects.swift",
+    "Sources/AppBundle/ui/core/WinMuxPanelLayer.swift",
+    "Sources/AppBundle/ui/settings/ConfigSettingsViews.swift",
+    "Sources/AppBundle/ui/sidebar/WorkspaceSidebarActions.swift",
+    "Sources/AppBundle/ui/sidebar/WorkspaceSidebarConfigEdits.swift",
+    "Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanel.swift",
+    "Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanelController.swift",
+    "Sources/AppBundleTests/command/AgentCommandTest.swift",
+    "Sources/AppBundleTests/command/ListWindowsTest.swift",
+    "Sources/AppBundleTests/command/MoveNodeToWorkspaceCommandTest.swift",
+    "Sources/AppBundleTests/config/ConfigTestConfigEdits.swift",
+    "Sources/AppBundleTests/config/ConfigTestWorkspaceSidebarConfig.swift",
+    "Sources/AppBundleTests/testUtil.swift",
+    "Sources/AppBundleTests/ui/WorkspaceNamingTest.swift",
+    "Sources/AppBundleTests/ui/WorkspaceSidebarDragTest.swift",
+    "Sources/Cli/_main.swift",
+    "Sources/Cli/cliUtil.swift",
+    "Sources/Cli/subcommandDescriptionsGenerated.swift",
+    "Sources/Common/cmdArgs/ArgParser.swift",
+    "Sources/Common/cmdArgs/ArgParserInput.swift",
+    "Sources/Common/cmdArgs/cmdArgsManifest.swift",
+    "Sources/Common/cmdArgs/impl/AgentCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/FocusMonitorCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/ListWindowsCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/ModeCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/MoveNodeToMonitorCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/MoveNodeToProjectCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/MoveNodeToWorkspaceCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/MoveWorkpsaceToMonitorCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/ProjectCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/SummonWorkspaceCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/TriggerBindingCmdArgs.swift",
+    "Sources/Common/cmdArgs/impl/WorkspaceCmdArgs.swift",
+    "Sources/Common/cmdArgs/parseSpecificCmdArgs.swift",
+    "Sources/Common/cmdHelpGenerated.swift",
+    "Sources/Common/model/clientServer.swift",
+    "Sources/Common/util/NWConnectionEx.swift",
+    "Sources/Common/util/WinMuxAny.swift",
+    "makefile",
+    "resources/default-config.toml",
+}
 
 # Files that are conflict-prone in upstream (frequently changed, config schemas)
 CONFLICT_PRONE_FILES = set()
 
 # PRs already integrated in this fork
-ALREADY_INTEGRATED = {}
+ALREADY_INTEGRATED = {
+    24: ("Expand CLI automation and add configurable sidebar layering", "dev.patch", "001-cli-automation-and-sidebar-layer.patch"),
+}
 
 # PRs to exclude (dependabot, docs-only, etc.)
 DEPENDABOT_AUTHORS = {"dependabot[bot]", "app/dependabot", "github-actions[bot]"}
