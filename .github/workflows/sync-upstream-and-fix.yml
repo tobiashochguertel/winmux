@@ -89,6 +89,10 @@ env:
     Sources/Common/util/WinMuxAny.swift
     makefile
     resources/default-config.toml
+    Sources/AppBundle/config/startAtLogin.swift
+    Sources/Common/appMetadata.swift
+    Sources/Common/util/showDiagnosticMessage.swift
+    project.yml
 jobs:
   # ── Stable: sync main from latest upstream release tag ────────────────────
   sync-main:

@@ -9,6 +9,21 @@ covers fork-only modifications.
 
 ## [Unreleased] — dev.patch
 
+### Added (fork identity, `002-fork-identity-and-tcc-reset.patch`)
+
+- **Own bundle ID** — `com.tobiashochguertel.winmux` (debug:
+  `com.tobiashochguertel.winmux.debug`). Socket path, LaunchAgent plist,
+  and diagnostic caches derive from it; no more TCC collisions with
+  upstream installs.
+- **TCC reset on install** — `make install` resets stale Accessibility
+  grants for the fork's bundle ID (`TCC_RESET=0` to skip).
+
+### Changed
+
+- Sparkle automatic update checks are **disabled**; the feed points at the
+  fork's releases (no more upstream "1.0" update offer).
+- `startAtLogin` cleanup also removes the upstream login item.
+
 ### Added (PR #24, `001-cli-automation-and-sidebar-layer.patch`)
 
 - **CLI automation** (`winmux` CLI, installable via `make cli-release`):

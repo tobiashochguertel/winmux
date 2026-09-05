@@ -1,0 +1,135 @@
+diff --git a/README.md b/README.md
+index 0a7ee838..d7095a3a 100644
+--- a/README.md
++++ b/README.md
+@@ -266,6 +266,26 @@ through `SPARKLE_PUBLIC_KEY`; keep the private key in the Keychain and do not co
+ 
+ Publishing a stable GitHub release also updates `Casks/winmux.rb` in `ZimengXiong/homebrew`. Before the first release, add a `HOMEBREW_TAP_TOKEN` repository secret to this repository. The token must have read and write access to the contents of `ZimengXiong/homebrew`.
+ 
++### Permissions across rebuilds
++
++This fork uses its own bundle identifier (`com.tobiashochguertel.winmux`), so
++it never shares privacy grants with the upstream app. macOS keys privacy
++grants (Accessibility, Screen Capture, …) to the app's bundle identifier
++**and** code signature hash. Local builds are signed ad-hoc, so every rebuild
++is a new identity and macOS asks for the permission again — this is expected
++and cannot be avoided without a stable Apple Development certificate.
++
++`make install` automatically resets stale TCC entries for the fork's bundle
++identifier before installing (`tccutil reset Accessibility
++com.tobiashochguertel.winmux`), so switching builds stays clean. If you still
++see a stale entry in System Settings, remove it manually or run:
++
++```bash
++tccutil reset Accessibility com.tobiashochguertel.winmux
++```
++
++The first launch of every new build requires granting Accessibility once.
++
+ ## Migrating
+ ### From AeroSpace
+ If `~/.config/winmux/winmux.toml` already exists, WinMux uses it as-is.
+diff --git a/Sources/AppBundle/config/startAtLogin.swift b/Sources/AppBundle/config/startAtLogin.swift
+index 2f660867..109a2049 100644
+--- a/Sources/AppBundle/config/startAtLogin.swift
++++ b/Sources/AppBundle/config/startAtLogin.swift
+@@ -21,7 +21,9 @@ private func cleanupPlistFromPrevVersions() { // todo Drop after a couple of ver
+     let launchAgentsDir = FileManager.default.homeDirectoryForCurrentUser.appending(component: "Library/LaunchAgents/")
+     Result { try FileManager.default.createDirectory(at: launchAgentsDir, withIntermediateDirectories: true) }.getOrDie()
+     let legacyUrl: URL = launchAgentsDir.appending(path: "com.zxzimeng.winmux.plist")
+-    let currentUrl: URL = launchAgentsDir.appending(path: "com.zimengxiong.winmux.plist")
++    let upstreamUrl: URL = launchAgentsDir.appending(path: "com.zimengxiong.winmux.plist")
++    let currentUrl: URL = launchAgentsDir.appending(path: "\(stableWinMuxAppId).plist")
+     try? FileManager.default.removeItem(at: legacyUrl)
++    try? FileManager.default.removeItem(at: upstreamUrl)
+     try? FileManager.default.removeItem(at: currentUrl)
+ }
+diff --git a/Sources/Common/appMetadata.swift b/Sources/Common/appMetadata.swift
+index 1ed5c83d..f6df7d09 100644
+--- a/Sources/Common/appMetadata.swift
++++ b/Sources/Common/appMetadata.swift
+@@ -1,6 +1,6 @@
+-public let stableWinMuxAppId: String = "com.zimengxiong.winmux"
++public let stableWinMuxAppId: String = "com.tobiashochguertel.winmux"
+ #if DEBUG
+-    public let winMuxAppId: String = "com.zimengxiong.winmux.debug"
++    public let winMuxAppId: String = "com.tobiashochguertel.winmux.debug"
+     public let winMuxAppName: String = "WinMux-Debug"
+ #else
+     public let winMuxAppId: String = stableWinMuxAppId
+diff --git a/Sources/Common/util/showDiagnosticMessage.swift b/Sources/Common/util/showDiagnosticMessage.swift
+index f01d4578..28c42d89 100644
+--- a/Sources/Common/util/showDiagnosticMessage.swift
++++ b/Sources/Common/util/showDiagnosticMessage.swift
+@@ -5,7 +5,7 @@ func showDiagnosticMessage(filenameIfConsoleApp: String, title: String, message:
+     if isCli {
+         print(titleAndMessage)
+     } else {
+-        let cachesDir = URL(filePath: "/tmp/com.zimengxiong.winmux/")
++        let cachesDir = URL(filePath: "/tmp/\(stableWinMuxAppId)/")
+         Result { try FileManager.default.createDirectory(at: cachesDir, withIntermediateDirectories: true) }.getOrDie()
+         let file = cachesDir.appending(component: filenameIfConsoleApp)
+         Result { try (titleAndMessage + "\n").write(to: file, atomically: true, encoding: .utf8) }.getOrDie()
+diff --git a/makefile b/makefile
+index f04d93ff..cd34d0a1 100644
+--- a/makefile
++++ b/makefile
+@@ -16,6 +16,9 @@ CLI_STAGE_PATH ?= $(RELEASE_DIR)/winmux
+ LOCAL_INSTALL_ROOT ?= $(CURDIR)/.local/install
+ INSTALL_LOCK_HELD ?= 0
+ LAUNCH_AFTER_INSTALL ?= 1
++APP_BUNDLE_ID ?= com.tobiashochguertel.winmux
++TCC_RESET ?= 1
++TCC_SERVICES ?= Accessibility
+ SPARKLE_PUBLIC_KEY ?= kcc3956V3+Yo8GtwFJ8Odb9sphIr09/9dsuoYBNtxf0=
+ ARGS ?=
+ 
+@@ -219,8 +222,19 @@ install:
+ 	fi; \
+ 	cleanup_install_lock() { rmdir "$$install_lock" >/dev/null 2>&1 || true; }; \
+ 	trap cleanup_install_lock EXIT; \
++	if [ "$(TCC_RESET)" = "1" ]; then \
++	    for service in $(TCC_SERVICES); do \
++	        if tccutil reset "$$service" "$(APP_BUNDLE_ID)" 2>/dev/null; then \
++	            echo "Reset TCC $$service for $(APP_BUNDLE_ID)"; \
++	        else \
++	            echo "TCC $$service: nothing to reset for $(APP_BUNDLE_ID) (fresh install)"; \
++	        fi; \
++	    done; \
++	else \
++	    echo "Skipping TCC reset because TCC_RESET=$(TCC_RESET)"; \
++	fi; \
+ 	$(MAKE) release VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" GENERATE_APPCAST=0 PUBLISH=0; \
+-	$(MAKE) install-staged VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" CLI_STAGE_PATH="$(CLI_STAGE_PATH)" LOCAL_INSTALL_ROOT="$(LOCAL_INSTALL_ROOT)" APP_INSTALL_DIR="$(APP_INSTALL_DIR)" INSTALL_LOCK_HELD=1 LAUNCH_AFTER_INSTALL="$(LAUNCH_AFTER_INSTALL)"'
++	$(MAKE) install-staged VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" CLI_STAGE_PATH="$(CLI_STAGE_PATH)" LOCAL_INSTALL_ROOT="$(LOCAL_INSTALL_ROOT)" APP_INSTALL_DIR="$(APP_INSTALL_DIR)" INSTALL_LOCK_HELD=1 LAUNCH_AFTER_INSTALL="$(LAUNCH_AFTER_INSTALL)" APP_BUNDLE_ID="$(APP_BUNDLE_ID)"'
+ 
+ install-staged:
+ 	/bin/bash -lc 'cd "$(CURDIR)" && \
+diff --git a/project.yml b/project.yml
+index b795ed26..8f44d266 100644
+--- a/project.yml
++++ b/project.yml
+@@ -22,8 +22,8 @@ targets:
+         CFBundleShortVersionString: $(MARKETING_VERSION)
+         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+         LSUIElement: true
+-        SUEnableAutomaticChecks: true
+-        SUFeedURL: https://github.com/ZimengXiong/winmux/releases/latest/download/appcast.xml
++        SUEnableAutomaticChecks: false
++        SUFeedURL: https://github.com/tobiashochguertel/winmux/releases/latest/download/appcast.xml
+         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
+     sources:
+       - "Sources/WinMuxApp"
+@@ -46,10 +46,10 @@ targets:
+       configs:
+         Debug:
+           PRODUCT_NAME: WinMux-Debug
+-          PRODUCT_BUNDLE_IDENTIFIER: com.zimengxiong.winmux.debug
++          PRODUCT_BUNDLE_IDENTIFIER: com.tobiashochguertel.winmux.debug
+         Release:
+           PRODUCT_NAME: WinMux
+-          PRODUCT_BUNDLE_IDENTIFIER: com.zimengxiong.winmux
++          PRODUCT_BUNDLE_IDENTIFIER: com.tobiashochguertel.winmux
+           SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+           GCC_TREAT_WARNINGS_AS_ERRORS: YES
+     entitlements:
