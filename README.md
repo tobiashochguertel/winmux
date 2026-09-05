@@ -266,6 +266,26 @@ through `SPARKLE_PUBLIC_KEY`; keep the private key in the Keychain and do not co
 
 Publishing a stable GitHub release also updates `Casks/winmux.rb` in `ZimengXiong/homebrew`. Before the first release, add a `HOMEBREW_TAP_TOKEN` repository secret to this repository. The token must have read and write access to the contents of `ZimengXiong/homebrew`.
 
+### Permissions across rebuilds
+
+This fork uses its own bundle identifier (`com.tobiashochguertel.winmux`), so
+it never shares privacy grants with the upstream app. macOS keys privacy
+grants (Accessibility, Screen Capture, …) to the app's bundle identifier
+**and** code signature hash. Local builds are signed ad-hoc, so every rebuild
+is a new identity and macOS asks for the permission again — this is expected
+and cannot be avoided without a stable Apple Development certificate.
+
+`make install` automatically resets stale TCC entries for the fork's bundle
+identifier before installing (`tccutil reset Accessibility
+com.tobiashochguertel.winmux`), so switching builds stays clean. If you still
+see a stale entry in System Settings, remove it manually or run:
+
+```bash
+tccutil reset Accessibility com.tobiashochguertel.winmux
+```
+
+The first launch of every new build requires granting Accessibility once.
+
 ## Migrating
 ### From AeroSpace
 If `~/.config/winmux/winmux.toml` already exists, WinMux uses it as-is.

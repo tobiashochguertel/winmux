@@ -22,8 +22,8 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSUIElement: true
-        SUEnableAutomaticChecks: true
-        SUFeedURL: https://github.com/ZimengXiong/winmux/releases/latest/download/appcast.xml
+        SUEnableAutomaticChecks: false
+        SUFeedURL: https://github.com/tobiashochguertel/winmux/releases/latest/download/appcast.xml
         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
     sources:
       - "Sources/WinMuxApp"
@@ -46,10 +46,10 @@ targets:
       configs:
         Debug:
           PRODUCT_NAME: WinMux-Debug
-          PRODUCT_BUNDLE_IDENTIFIER: com.zimengxiong.winmux.debug
+          PRODUCT_BUNDLE_IDENTIFIER: com.tobiashochguertel.winmux.debug
         Release:
           PRODUCT_NAME: WinMux
-          PRODUCT_BUNDLE_IDENTIFIER: com.zimengxiong.winmux
+          PRODUCT_BUNDLE_IDENTIFIER: com.tobiashochguertel.winmux
           SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
           GCC_TREAT_WARNINGS_AS_ERRORS: YES
     entitlements:
