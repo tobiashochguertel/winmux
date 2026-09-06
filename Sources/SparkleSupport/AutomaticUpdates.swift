@@ -2,9 +2,10 @@ import Sparkle
 
 /// Coordinates application updates from the release appcast.
 ///
-/// Fork builds never start this updater (see `WinMuxApp.init`): the fork
-/// publishes no appcast and must not reach the upstream feed. The type stays
-/// for upstream-merge friendliness.
+/// The fork signs its own appcast with its own Ed25519 key (see the
+/// `SPARKLE_PUBLIC_KEY` in the makefile) and publishes releases via
+/// `make release GENERATE_APPCAST=1 PUBLISH=1`. The feed URL is the fork's
+/// `releases/latest/download/appcast.xml`, never upstream's.
 @MainActor
 public enum AutomaticUpdates {
     private static let updaterController = SPUStandardUpdaterController(
