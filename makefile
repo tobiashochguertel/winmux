@@ -19,7 +19,7 @@ LAUNCH_AFTER_INSTALL ?= 1
 APP_BUNDLE_ID ?= com.tobiashochguertel.winmux
 TCC_RESET ?= 1
 TCC_SERVICES ?= Accessibility
-SPARKLE_PUBLIC_KEY ?= kcc3956V3+Yo8GtwFJ8Odb9sphIr09/9dsuoYBNtxf0=
+SPARKLE_PUBLIC_KEY ?= KYPiGyMjSa5z0mL6Kh42Dnrms6n5LJbk8WiyCM4ghnc=
 ARGS ?=
 
 .PHONY: generate xcodeproj build build-clean run run-clean cli cli-release release install install-staged verify-installed installed clean
