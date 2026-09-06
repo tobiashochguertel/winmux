@@ -9,6 +9,17 @@ covers fork-only modifications.
 
 ## [Unreleased] — dev.patch
 
+### Changed (`004-restore-updater-fork-appcast.patch`)
+
+- **Sparkle updater restored and fixed for the fork**: automatic update
+  checks on again, "Check for Updates…" menu item back — but now against
+  the **fork's own appcast** (`tobiashochguertel/winmux` releases),
+  signed with the fork's own Ed25519 key (private key in the local login
+  keychain). The upstream feed (and its bogus "1.0" item pointing at an
+  old zip) can never reach fork users again.
+- First release with an appcast: `make release VERSION=… GENERATE_APPCAST=1 PUBLISH=1`
+  (app-only appcast entries still require `ALLOW_APP_ONLY_PROTOCOL_UPDATE=1`).
+
 ### Removed (`003-remove-sparkle-updater.patch`)
 
 - **Sparkle updater removed from fork builds** — no automatic update
