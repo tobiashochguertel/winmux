@@ -3,6 +3,7 @@
 /.derived
 /.release
 /.shell-completion
+/WinMux.xcodeproj
 __pycache__/
 *.pyc
 .build/
