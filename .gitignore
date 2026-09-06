@@ -1,3 +1,8 @@
+/.idea
+/.debug
+/.derived
+/.release
+/.shell-completion
 __pycache__/
 *.pyc
 .build/
