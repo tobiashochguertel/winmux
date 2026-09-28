@@ -3,7 +3,7 @@
 Catalog of open pull requests from [ZimengXiong/winmux](https://github.com/ZimengXiong/winmux/pulls)
 evaluated for integration into the fork via the `.patch` strategy.
 
-**Last updated:** 2026-09-21
+**Last updated:** 2026-09-28
 **Total open PRs:** 5
 
 ## Legend
