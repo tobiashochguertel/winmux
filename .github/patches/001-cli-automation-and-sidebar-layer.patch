@@ -57,7 +57,7 @@ index b1fa48c2..0a7ee838 100644
 +build can be installed without the publishing key using:
 +
 +```shell
-+make install VERSION=<version> CODESIGN_IDENTITY=- CODESIGN_STYLE=Manual \
++make install VERSION=<version> CODESIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
 +  DEVELOPMENT_TEAM= EXPECTED_CODESIGN_AUTHORITY_PREFIX=
 +```
 +
@@ -3066,7 +3066,7 @@ index f0d5830a..a1f11e97 100644
  CODESIGN_IDENTITY ?= Apple Development
  EXPECTED_CODESIGN_AUTHORITY_PREFIX ?= Authority=Apple Development:
  CODE_SIGN_STYLE ?= Manual
-+CODESIGN_STYLE ?= Automatic
++CODESIGN_STYLE ?= $(CODE_SIGN_STYLE)
  DEVELOPMENT_TEAM ?= W9C2P3N7Q2
  RELEASE_DIR ?= .release
  RELEASE_TAG ?= v$(VERSION)
@@ -3159,8 +3159,8 @@ index f0d5830a..a1f11e97 100644
 +	    codesign -dv --verbose=4 "$$app_path" 2>&1 | grep -F "$$expected_authority" >/dev/null; \
 +	    codesign -dv --verbose=4 "$$cli_path" 2>&1 | grep -F "$$expected_authority" >/dev/null; \
 +	fi; \
-+	generated_version="$$(sed -n 's/^public let winMuxAppVersion = "\(.*\)"/\1/p' Sources/Common/versionGenerated.swift)"; \
-+	generated_hash="$$(sed -n 's/^public let gitHash = "\(.*\)"/\1/p' Sources/Common/gitHashGenerated.swift)"; \
++	generated_version="$$(sed -n '\''s/^public let winMuxAppVersion = "\(.*\)"/\1/p'\'' Sources/Common/versionGenerated.swift)"; \
++	generated_hash="$$(sed -n '\''s/^public let gitHash = "\(.*\)"/\1/p'\'' Sources/Common/gitHashGenerated.swift)"; \
 +	test "$$generated_version" = "$(VERSION)"; \
 +	test -n "$$generated_hash"; \
 +	strings "$$app_path/Contents/MacOS/$$app_name" | grep -F -x "$$generated_version" >/dev/null; \
@@ -3216,7 +3216,7 @@ index f0d5830a..a1f11e97 100644
 +	fi; \
 +	cleanup_install_lock() { rmdir "$$install_lock" >/dev/null 2>&1 || true; }; \
 +	trap cleanup_install_lock EXIT; \
-+	$(MAKE) release VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" GENERATE_APPCAST=0 CODESIGN_STYLE=Automatic; \
++	$(MAKE) release VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" GENERATE_APPCAST=0 CODE_SIGN_STYLE=Automatic; \
 +	$(MAKE) install-staged VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" CLI_STAGE_PATH="$(CLI_STAGE_PATH)" LOCAL_INSTALL_ROOT="$(LOCAL_INSTALL_ROOT)" APP_INSTALL_DIR="$(APP_INSTALL_DIR)" INSTALL_LOCK_HELD=1 LAUNCH_AFTER_INSTALL="$(LAUNCH_AFTER_INSTALL)"'
 +
 +install-staged:
