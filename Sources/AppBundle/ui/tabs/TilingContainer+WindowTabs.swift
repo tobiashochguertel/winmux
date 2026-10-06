@@ -8,7 +8,13 @@ extension TilingContainer {
 
     @MainActor
     var showsWindowTabs: Bool {
-        usesWindowTabBehavior && !hasFullscreenTab
+        usesWindowTabBehavior && !hasFullscreenTab && !usesDoubleSidedWindows
+    }
+
+    @MainActor
+    var usesDoubleSidedWindows: Bool {
+        usesWindowTabBehavior && ExperimentalUISettings().doubleSidedWindows &&
+            children.count == 2 && children.allSatisfy { $0 is Window } && !hasFullscreenTab
     }
 
     @MainActor
