@@ -8,10 +8,7 @@ public struct FocusMonitorCmdArgs: CmdArgs {
         flags: [
             "--wrap-around": trueBoolFlag(\.wrapAround),
         ],
-        posArgs: [
-            dashDashArg(mandatory: false),
-            newMandatoryPosArgParser(\.target, parseTarget, placeholder: MonitorTarget.cases.joinedCliArgs),
-        ],
+        posArgs: [newMandatoryPosArgParser(\.target, parseTarget, placeholder: MonitorTarget.cases.joinedCliArgs)],
     )
 
     public var wrapAround: Bool = false
@@ -24,18 +21,18 @@ func parseFocusMonitorCmdArgs(_ args: StrArrSlice) -> ParsedCmd<FocusMonitorCmdA
 }
 
 func parseTarget(i: PosArgParserInput) -> ParsedCliArgs<MonitorTarget> {
-    switch (i.arg, i.sawDashDash) {
-        case ("next", false):
+    switch i.arg {
+        case "next":
             return .succ(.relative(.next), advanceBy: 1)
-        case ("prev", false):
+        case "prev":
             return .succ(.relative(.prev), advanceBy: 1)
-        case ("left", false):
+        case "left":
             return .succ(.direction(.left), advanceBy: 1)
-        case ("down", false):
+        case "down":
             return .succ(.direction(.down), advanceBy: 1)
-        case ("up", false):
+        case "up":
             return .succ(.direction(.up), advanceBy: 1)
-        case ("right", false):
+        case "right":
             return .succ(.direction(.right), advanceBy: 1)
         default:
             let args = i.nonFlagArgs()

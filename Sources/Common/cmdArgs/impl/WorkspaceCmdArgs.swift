@@ -13,10 +13,7 @@ public struct WorkspaceCmdArgs: CmdArgs {
             "--stdin": optionalTrueBoolFlag(\.explicitStdinFlag),
             "--no-stdin": optionalFalseBoolFlag(\.explicitStdinFlag),
         ],
-        posArgs: [
-            dashDashArg(mandatory: false),
-            newMandatoryPosArgParser(\.target, parseWorkspaceTarget, placeholder: workspaceTargetPlaceholder),
-        ],
+        posArgs: [newMandatoryPosArgParser(\.target, parseWorkspaceTarget, placeholder: workspaceTargetPlaceholder)],
         conflictingOptions: [
             ["--stdin", "--no-stdin"],
         ],
@@ -66,9 +63,9 @@ public enum WorkspaceTarget: Equatable, Sendable {
 let workspaceTargetPlaceholder = "(<workspace-name>|next|prev)"
 
 func parseWorkspaceTarget(i: PosArgParserInput) -> ParsedCliArgs<WorkspaceTarget> {
-    switch (i.arg, i.sawDashDash) {
-        case ("next", false): .succ(.relative(.next), advanceBy: 1)
-        case ("prev", false): .succ(.relative(.prev), advanceBy: 1)
+    switch i.arg {
+        case "next": .succ(.relative(.next), advanceBy: 1)
+        case "prev": .succ(.relative(.prev), advanceBy: 1)
         default: .init(WorkspaceName.parse(i.arg).map(WorkspaceTarget.direct), advanceBy: 1)
     }
 }

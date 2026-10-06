@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ShortcutBehaviorSettingsView: View {
     @ObservedObject var model: ShortcutSettingsModel
+    @State private var doubleSidedWindows = ExperimentalUISettings().doubleSidedWindows
     @State private var automaticallyTileNewWindows = config.automaticallyTileNewWindows
     @State private var autoAddNewWindowsToTabGroup = config.autoAddNewWindowsToTabGroup
     @State private var enableShakeToToggleTiling = config.enableShakeToToggleTiling
@@ -21,6 +22,19 @@ struct ShortcutBehaviorSettingsView: View {
                 SettingsToggle("Tile new windows automatically", isOn: $automaticallyTileNewWindows, help: "Place new windows in the current tiled layout.") { persistRootBool("automatically-tile-new-windows", automaticallyTileNewWindows) }
                 SettingsToggle("Add new windows to the current tab group", isOn: $autoAddNewWindowsToTabGroup, help: "Keep new windows in the selected stack instead of creating a new tile.") { persistRootBool("auto-add-new-windows-to-tab-group", autoAddNewWindowsToTabGroup) }
                 SettingsToggle("Unhide macOS-hidden apps", isOn: $automaticallyUnhideMacosHiddenApps, help: "Restore apps macOS has hidden when they receive focus.") { persistRootBool("automatically-unhide-macos-hidden-apps", automaticallyUnhideMacosHiddenApps) }
+            }
+            SettingsSection("Window pairs") {
+                SettingsToggle("Double-sided windows", isOn: $doubleSidedWindows, help: "Replace two-window tab strips with two sides. Option-click anywhere in the window or press Option-Tab to flip.") {
+                    var settings = ExperimentalUISettings()
+                    settings.doubleSidedWindows = doubleSidedWindows
+                    if doubleSidedWindows { requestScreenRecordingPermissionsIfNeeded() }
+                    scheduleRefreshSession(.menuBarButton)
+                }
+                Text("Option-click anywhere in the window or press Option-Tab to flip between two windows. Three or more windows use tabs. Window tabs must be enabled. Rotation uses Screen Recording access and respects Reduce Motion.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
             }
             SettingsSection("Interaction") {
                 SettingsToggle("Shake to toggle tiling", isOn: $enableShakeToToggleTiling, help: "Shake a window by its title bar to switch between floating and tiled.") { persistRootBool("enable-shake-to-toggle-tiling", enableShakeToToggleTiling) }
@@ -52,6 +66,7 @@ struct ShortcutBehaviorSettingsView: View {
                 }
             }
         }
+        .id(model.settingsRevision)
     }
 
     private func persistRootBool(_ key: String, _ value: Bool) { persistConfig(section: nil, key: key, value: value ? "true" : "false") }
@@ -65,7 +80,6 @@ struct ShortcutAppearanceSettingsView: View {
     @ObservedObject var model: ShortcutSettingsModel
     @State private var sidebarEnabled = config.workspaceSidebar.enabled
     @State private var sidebarFocusEnabled = config.workspaceSidebar.enableFocus
-    @State private var sidebarStayOnTop = config.workspaceSidebar.stayOnTop
     @State private var sidebarAutoHide = config.workspaceSidebar.autoHide
     @State private var sidebarAlwaysExpanded = config.workspaceSidebar.alwaysExpanded
     @State private var showStatusPills = config.workspaceSidebar.showStatusPills
@@ -108,7 +122,6 @@ struct ShortcutAppearanceSettingsView: View {
             SettingsSection("Sidebar") {
                 SettingsToggle("Show sidebar", isOn: $sidebarEnabled, help: "Show the workspace rail on configured displays.") { sidebarBool("enabled", sidebarEnabled) }
                 SettingsToggle("Focus sidebar monitor only", isOn: $sidebarFocusEnabled, help: "Show the sidebar only on the focused monitor when monitor scope allows it.") { sidebarBool("enable-focus", sidebarFocusEnabled) }
-                SettingsToggle("Keep sidebar above Dock", isOn: $sidebarStayOnTop, help: "Keep the sidebar above the Dock. Turn this off to let the Dock appear over it.") { sidebarBool("stay-on-top", sidebarStayOnTop) }
                 SettingsToggle("Reveal sidebar at the display edge", isOn: $sidebarAutoHide, help: "Hide the compact rail until the pointer reaches the left edge.") { sidebarBool("auto-hide", sidebarAutoHide) }
                 SettingsToggle("Keep sidebar expanded", isOn: $sidebarAlwaysExpanded, help: "Reserve the full sidebar width for tiled windows.") { sidebarBool("always-expanded", sidebarAlwaysExpanded) }
                 SettingsStepper("Expanded width", value: $sidebarWidth, range: 120...480, help: "Width of the fully expanded sidebar.") { sidebarInt("width", sidebarWidth) }
@@ -140,6 +153,7 @@ struct ShortcutAppearanceSettingsView: View {
                 SettingsStepper("Outer bottom", value: $outerBottomGap, range: 0...120, help: "Inset at the bottom display edge.") { persist("gaps", "outer.bottom", "\(outerBottomGap)") }
             }
         }
+        .id(model.settingsRevision)
     }
 
     private func sidebarBool(_ key: String, _ value: Bool) { persist("workspace-sidebar", key, value ? "true" : "false") }
@@ -187,7 +201,7 @@ struct ShortcutAutomationSettingsView: View {
             }
         }
         .task { loadCommands() }
-        .onChange(of: model.settingsRevision) { _ in loadCommands() }
+        .id(model.settingsRevision)
     }
 
     private func loadCommands() {
@@ -292,7 +306,7 @@ private struct SettingsStepper: View {
         HStack(spacing: 10) {
             Text(title)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Slider(value: Binding(get: { Double(value) }, set: { value = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
+            Slider(value: Binding(get: { Double(value) }, set: { value = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound))
                 .frame(width: 96)
             TextField("", value: $value, format: .number)
                 .textFieldStyle(.roundedBorder)

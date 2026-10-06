@@ -9,7 +9,7 @@ struct ProjectCommand: Command {
         let monitor = target.workspace.workspaceMonitor
         let currentProjectId = activeWorkspaceProjectId(for: monitor)
         guard let project = resolveProjectTarget(args.target.val, currentProjectId: currentProjectId, wrapAround: args.wrapAround) else {
-            return io.err(projectTargetResolutionError(args.target.val))
+            return io.err("Can't resolve project target")
         }
         if project.id == currentProjectId {
             if !args.failIfNoop {

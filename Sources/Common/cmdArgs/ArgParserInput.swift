@@ -1,7 +1,6 @@
 struct PosArgParserInput: ArgParserInput {
     /*conforms*/ let index: Int
     /*conforms*/ let args: StrArrSlice
-    var sawDashDash: Bool
 
     var arg: String { args[index] }
 }
@@ -24,19 +23,13 @@ extension ArgParserInput {
 
     func nonFlagArgs() -> ArrSlice<String> {
         var i = index
-        while args.indices.contains(i) && !args[i].isCliDashFlag {
+        while args.indices.contains(i) && !args[i].starts(with: "-") {
             i += 1
         }
         return args.slice(index ..< i).orDie()
     }
 
     func nonFlagArgOrNil() -> String? {
-        args.getOrNil(atIndex: index)?.takeIf { !$0.isCliDashFlag }
-    }
-}
-
-extension String {
-    public var isCliDashFlag: Bool {
-        self != "--" && self != "-" && starts(with: "-")
+        args.getOrNil(atIndex: index)?.takeIf { !$0.starts(with: "-") }
     }
 }
