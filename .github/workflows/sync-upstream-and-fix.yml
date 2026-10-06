@@ -89,12 +89,19 @@ env:
     Sources/Common/util/WinMuxAny.swift
     makefile
     resources/default-config.toml
+    # Patches 002-004 (dev.patch only)
     Sources/AppBundle/config/startAtLogin.swift
     Sources/Common/appMetadata.swift
     Sources/Common/util/showDiagnosticMessage.swift
     project.yml
     Sources/SparkleSupport/AutomaticUpdates.swift
     Sources/WinMuxApp/WinMuxApp.swift
+    # Upstream's CI/release pipelines must never run on the fork (they need
+    # secrets and makefile targets the fork does not have). Reverting them
+    # before merge keeps future syncs conflict-free; they are removed again
+    # after every merge.
+    .github/workflows/ci.yml
+    .github/workflows/release.yml
 jobs:
   # ── Stable: sync main from latest upstream release tag ────────────────────
   sync-main:
@@ -110,7 +117,9 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Upstream merges can carry .github/workflows/ changes, which
+          # GITHUB_TOKEN may not push — use the PAT when available.
+          token: ${{ secrets.FORK_SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Configure git
         run: |
@@ -181,6 +190,15 @@ jobs:
           echo "::error::Merge conflict with upstream ${{ steps.upstream-ref.outputs.merge_ref }}. Manual resolution required."
           exit 1
 
+      - name: Remove upstream CI/release workflows
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: |
+          # Upstream's ci.yml runs `make check` (missing on the fork) and
+          # release.yml publishes on every push to main (needs signing
+          # secrets the fork does not have) — both would fail here.
+          git rm -q --ignore-unmatch .github/workflows/ci.yml .github/workflows/release.yml
+          git diff --cached --quiet || git commit -m "chore: drop upstream CI/release workflows on fork [skip ci]"
+
       - name: Apply all patches
         if: steps.check-uptodate.outputs.up_to_date != 'true'
         run: |
@@ -221,7 +239,7 @@ jobs:
         with:
           ref: dev.patch
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.FORK_SYNC_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Configure git
         run: |
@@ -290,6 +308,12 @@ jobs:
         run: |
           echo "::error::Merge conflict with upstream ${{ steps.upstream-ref.outputs.merge_ref }}. Manual resolution required."
           exit 1
+
+      - name: Remove upstream CI/release workflows
+        if: steps.check-uptodate.outputs.up_to_date != 'true'
+        run: |
+          git rm -q --ignore-unmatch .github/workflows/ci.yml .github/workflows/release.yml
+          git diff --cached --quiet || git commit -m "chore: drop upstream CI/release workflows on fork [skip ci]"
 
       - name: Apply all patches
         if: steps.check-uptodate.outputs.up_to_date != 'true'

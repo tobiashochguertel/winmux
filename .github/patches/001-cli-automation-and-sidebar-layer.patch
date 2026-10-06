@@ -11,7 +11,7 @@ index a5891016..2d168519 100644
              path: "Sources/AppBundleTests",
          ),
 diff --git a/README.md b/README.md
-index 736373e4..0a7ee838 100644
+index b1fa48c2..0a7ee838 100644
 --- a/README.md
 +++ b/README.md
 @@ -26,6 +26,7 @@ contrast across the sidebar, tab groups, and switcher:
@@ -22,7 +22,7 @@ index 736373e4..0a7ee838 100644
      chrome-style = 'solid'
      solid-chrome-color = 'lavender' # Choose any color shown in Appearance, including custom.
  ```
-@@ -165,9 +166,103 @@ Release builds are signed with the project's Apple Development certificate. They
+@@ -165,6 +166,106 @@ Release builds are signed with the project's Apple Development certificate. They
  
  WinMux checks GitHub Releases for signed updates automatically. You can also select **Check for Updates…** from the menu bar.
  
@@ -114,9 +114,8 @@ index 736373e4..0a7ee838 100644
 +roll back `WinMux.app` and `winmux` together. The client bounds negotiation so accidentally
 +connecting a new CLI to a legacy server reports an upgrade error instead of waiting forever.
 +
- ### Release updates
- 
--`make release VERSION=<version>` creates a signed `appcast.xml` alongside the release archive and uploads both to the GitHub release. Sparkle signs the appcast with the Ed25519 key in the local login Keychain. The matching public key is set through `SPARKLE_PUBLIC_KEY` in the makefile; keep the private key in the Keychain and do not commit or share it.
++### Release updates
++
 +`make release VERSION=<version>` currently builds locally without publishing or generating
 +an appcast. During the socket protocol-v1 migration, an app-only Sparkle update would leave
 +an older CLI behind, so appcast generation is refused unless the maintainer deliberately sets
@@ -124,9 +123,12 @@ index 736373e4..0a7ee838 100644
 +both `WinMux.app` and `bin/winmux`. When app-only updates are compatible again, Sparkle signs
 +the appcast with the Ed25519 key in the local login Keychain. The matching public key is set
 +through `SPARKLE_PUBLIC_KEY`; keep the private key in the Keychain and do not commit or share it.
- 
- Publishing a stable GitHub release also updates `Casks/winmux.rb` in `ZimengXiong/homebrew`. Before the first release, add a `HOMEBREW_TAP_TOKEN` repository secret to this repository. The token must have read and write access to the contents of `ZimengXiong/homebrew`.
- 
++
++Publishing a stable GitHub release also updates `Casks/winmux.rb` in `ZimengXiong/homebrew`. Before the first release, add a `HOMEBREW_TAP_TOKEN` repository secret to this repository. The token must have read and write access to the contents of `ZimengXiong/homebrew`.
++
+ ## Migrating
+ ### From AeroSpace
+ If `~/.config/winmux/winmux.toml` already exists, WinMux uses it as-is.
 diff --git a/Sources/AppBundle/command/Command.swift b/Sources/AppBundle/command/Command.swift
 index 7da92b97..27c09653 100644
 --- a/Sources/AppBundle/command/Command.swift
@@ -1057,10 +1059,10 @@ index 8296c060..b6a5033c 100644
 +    stayOnTop ? WinMuxPanelLayer.workspaceSidebar.level : .floating
  }
 diff --git a/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift b/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift
-index 4ad8746c..0829b37a 100644
+index 3ee34363..a5e59b9a 100644
 --- a/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift
 +++ b/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift
-@@ -52,7 +52,6 @@ struct ShortcutBehaviorSettingsView: View {
+@@ -66,7 +66,6 @@ struct ShortcutBehaviorSettingsView: View {
                  }
              }
          }
@@ -1068,7 +1070,7 @@ index 4ad8746c..0829b37a 100644
      }
  
      private func persistRootBool(_ key: String, _ value: Bool) { persistConfig(section: nil, key: key, value: value ? "true" : "false") }
-@@ -66,6 +65,7 @@ struct ShortcutAppearanceSettingsView: View {
+@@ -80,6 +79,7 @@ struct ShortcutAppearanceSettingsView: View {
      @ObservedObject var model: ShortcutSettingsModel
      @State private var sidebarEnabled = config.workspaceSidebar.enabled
      @State private var sidebarFocusEnabled = config.workspaceSidebar.enableFocus
@@ -1076,7 +1078,7 @@ index 4ad8746c..0829b37a 100644
      @State private var sidebarAutoHide = config.workspaceSidebar.autoHide
      @State private var sidebarAlwaysExpanded = config.workspaceSidebar.alwaysExpanded
      @State private var showStatusPills = config.workspaceSidebar.showStatusPills
-@@ -108,6 +108,7 @@ struct ShortcutAppearanceSettingsView: View {
+@@ -122,6 +122,7 @@ struct ShortcutAppearanceSettingsView: View {
              SettingsSection("Sidebar") {
                  SettingsToggle("Show sidebar", isOn: $sidebarEnabled, help: "Show the workspace rail on configured displays.") { sidebarBool("enabled", sidebarEnabled) }
                  SettingsToggle("Focus sidebar monitor only", isOn: $sidebarFocusEnabled, help: "Show the sidebar only on the focused monitor when monitor scope allows it.") { sidebarBool("enable-focus", sidebarFocusEnabled) }
@@ -1084,7 +1086,7 @@ index 4ad8746c..0829b37a 100644
                  SettingsToggle("Reveal sidebar at the display edge", isOn: $sidebarAutoHide, help: "Hide the compact rail until the pointer reaches the left edge.") { sidebarBool("auto-hide", sidebarAutoHide) }
                  SettingsToggle("Keep sidebar expanded", isOn: $sidebarAlwaysExpanded, help: "Reserve the full sidebar width for tiled windows.") { sidebarBool("always-expanded", sidebarAlwaysExpanded) }
                  SettingsStepper("Expanded width", value: $sidebarWidth, range: 120...480, help: "Width of the fully expanded sidebar.") { sidebarInt("width", sidebarWidth) }
-@@ -139,7 +140,6 @@ struct ShortcutAppearanceSettingsView: View {
+@@ -153,7 +154,6 @@ struct ShortcutAppearanceSettingsView: View {
                  SettingsStepper("Outer bottom", value: $outerBottomGap, range: 0...120, help: "Inset at the bottom display edge.") { persist("gaps", "outer.bottom", "\(outerBottomGap)") }
              }
          }
@@ -1092,7 +1094,7 @@ index 4ad8746c..0829b37a 100644
      }
  
      private func sidebarBool(_ key: String, _ value: Bool) { persist("workspace-sidebar", key, value ? "true" : "false") }
-@@ -187,7 +187,7 @@ struct ShortcutAutomationSettingsView: View {
+@@ -201,7 +201,7 @@ struct ShortcutAutomationSettingsView: View {
              }
          }
          .task { loadCommands() }
@@ -3057,22 +3059,24 @@ index d3e552dd..132b3db4 100644
  
  extension Int: WinMuxAny {}
 diff --git a/makefile b/makefile
-index d4f97ab6..f04d93ff 100644
+index f0d5830a..f04d93ff 100644
 --- a/makefile
 +++ b/makefile
-@@ -2,17 +2,24 @@ VERSION ?= 0.0.0-SNAPSHOT
+@@ -1,15 +1,25 @@
+-VERSION ?= $(shell tr -d '[:space:]' < VERSION)
++VERSION ?= 0.0.0-SNAPSHOT
  CODESIGN_IDENTITY ?= Apple Development
  EXPECTED_CODESIGN_AUTHORITY_PREFIX ?= Authority=Apple Development:
+-CODE_SIGN_STYLE ?= Manual
  DEVELOPMENT_TEAM ?= W9C2P3N7Q2
 +CODESIGN_STYLE ?= Automatic
- NOTARIZE ?= 0
- NOTARYTOOL_PROFILE ?= winmux
++NOTARIZE ?= 0
++NOTARYTOOL_PROFILE ?= winmux
 +GENERATE_APPCAST ?= 0
 +ALLOW_APP_ONLY_PROTOCOL_UPDATE ?= 0
  RELEASE_DIR ?= .release
  RELEASE_TAG ?= v$(VERSION)
- RELEASE_NOTES ?= auto
--PUBLISH ?= 1
++RELEASE_NOTES ?= auto
 +PUBLISH ?= 0
  APP_INSTALL_DIR ?= /Applications
 +CLI_STAGE_PATH ?= $(RELEASE_DIR)/winmux
@@ -3082,20 +3086,25 @@ index d4f97ab6..f04d93ff 100644
  SPARKLE_PUBLIC_KEY ?= kcc3956V3+Yo8GtwFJ8Odb9sphIr09/9dsuoYBNtxf0=
  ARGS ?=
  
--.PHONY: generate xcodeproj build build-clean run run-clean cli release install installed clean
+-.PHONY: generate xcodeproj build build-clean run run-clean cli check release install installed clean
 +.PHONY: generate xcodeproj build build-clean run run-clean cli cli-release release install install-staged verify-installed installed clean
  
  generate:
  	/bin/bash -lc 'cd "$(CURDIR)" && \
-@@ -83,8 +90,31 @@ cli:
+@@ -80,17 +90,31 @@ cli:
  	$(MAKE) build VERSION="$(VERSION)"
  	/bin/bash -lc 'cd "$(CURDIR)" && exec ./.debug/winmux $(ARGS)'
  
+-check:
 +cli-release:
 +	$(MAKE) generate VERSION="$(VERSION)"
-+	/bin/bash -lc 'cd "$(CURDIR)" && \
-+	set -euo pipefail && \
-+	source ./script/setup.sh && \
+ 	/bin/bash -lc 'cd "$(CURDIR)" && \
+ 	set -euo pipefail && \
+ 	source ./script/setup.sh && \
+-	swift test && \
+-	python3 -m unittest script/test_validate_appcast.py && \
+-	swift package resolve && \
+-	git diff --exit-code -- Package.resolved'
 +	swift build -c release --arch arm64 --arch x86_64 --product winmux -Xswiftc -warnings-as-errors && \
 +	cli_build_dir="$$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path | /usr/bin/tail -n 1)" && \
 +	cli_stage_path="$(CLI_STAGE_PATH)" && \
@@ -3107,7 +3116,7 @@ index d4f97ab6..f04d93ff 100644
 +	archs="$$(/usr/bin/lipo -archs "$$cli_stage_path")" && \
 +	case " $$archs " in *" arm64 "*) ;; *) echo "CLI is missing arm64" >&2; exit 1;; esac && \
 +	case " $$archs " in *" x86_64 "*) ;; *) echo "CLI is missing x86_64" >&2; exit 1;; esac'
-+
+ 
  release:
 +	@if [ "$(GENERATE_APPCAST)" = "1" ] && [ "$(ALLOW_APP_ONLY_PROTOCOL_UPDATE)" != "1" ]; then \
 +	    echo "Refusing to generate an app-only Sparkle update during the socket protocol-v1 migration." >&2; \
@@ -3119,7 +3128,7 @@ index d4f97ab6..f04d93ff 100644
  	/bin/bash -lc 'cd "$(CURDIR)" && \
  	set -euo pipefail && \
  	source ./script/setup.sh && \
-@@ -95,9 +125,12 @@ release:
+@@ -101,9 +125,12 @@ release:
  	derived_data_path="$$release_dir/$$app_name-$(VERSION).deriveddata"; \
  	app_path="$$archive_path/Products/Applications/$$app_name.app"; \
  	zip_path="$$release_dir/$$app_name-$(VERSION).zip"; \
@@ -3133,17 +3142,20 @@ index d4f97ab6..f04d93ff 100644
  	mkdir -p "$$release_dir"; \
  	xcodebuild-pretty "$$log_path" \
  	    -project WinMux.xcodeproj \
-@@ -107,16 +140,36 @@ release:
+@@ -113,45 +140,277 @@ release:
  	    -derivedDataPath "$$derived_data_path" \
  	    CODE_SIGN_IDENTITY="$(CODESIGN_IDENTITY)" \
  	    DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" \
--	    CODE_SIGN_STYLE=Automatic \
+-	    CODE_SIGN_STYLE="$(CODE_SIGN_STYLE)" \
 +	    CODE_SIGN_STYLE="$(CODESIGN_STYLE)" \
  	    archive; \
  	test -d "$$app_path"; \
+-	test "$$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$$app_path/Contents/Info.plist")" = "$(VERSION)"; \
+-	test "$$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$$app_path/Contents/Info.plist")" = "$(VERSION)"; \
 +	test -x "$$cli_path"; \
  	codesign --verify --deep --strict --verbose=2 "$$app_path"; \
 -	codesign -dv --verbose=4 "$$app_path" 2>&1 | grep -F "$(EXPECTED_CODESIGN_AUTHORITY_PREFIX)" >/dev/null; \
+-	codesign -dv --verbose=4 "$$app_path" 2>&1 | grep -E "^CodeDirectory .*flags=.*runtime" >/dev/null; \
 +	app_archs="$$(/usr/bin/lipo -archs "$$app_path/Contents/MacOS/$$app_name")"; \
 +	case " $$app_archs " in *" arm64 "*) ;; *) echo "App is missing arm64" >&2; exit 1;; esac; \
 +	case " $$app_archs " in *" x86_64 "*) ;; *) echo "App is missing x86_64" >&2; exit 1;; esac; \
@@ -3163,24 +3175,35 @@ index d4f97ab6..f04d93ff 100644
  	ditto -c -k --sequesterRsrc --keepParent "$$app_path" "$$zip_path"; \
 -	sparkle_appcast="$$(find "$$derived_data_path/SourcePackages/artifacts" -type f -name generate_appcast -print -quit)"; \
 -	test -n "$$sparkle_appcast"; \
--	"$$sparkle_appcast" --download-url-prefix "https://github.com/ZimengXiong/winmux/releases/download/$(RELEASE_TAG)/" "$$release_dir"; \
--	test -f "$$appcast_path"; \
+-	appcast_stage="$$(mktemp -d "$$release_dir/appcast-stage.XXXXXX")"; \
+-	trap "rm -rf \"$$appcast_stage\"" EXIT; \
+-	cp "$$zip_path" "$$appcast_stage/"; \
+-	if [ -n "$${SPARKLE_PRIVATE_KEY:-}" ]; then \
+-	    printf "%s" "$$SPARKLE_PRIVATE_KEY" | "$$sparkle_appcast" --ed-key-file - --download-url-prefix "https://github.com/ZimengXiong/winmux/releases/download/$(RELEASE_TAG)/" "$$appcast_stage"; \
 +	if [ "$(GENERATE_APPCAST)" = "1" ]; then \
 +	    sparkle_appcast="$$(find "$$derived_data_path/SourcePackages/artifacts" -type f -name generate_appcast -print -quit)"; \
 +	    test -n "$$sparkle_appcast"; \
 +	    "$$sparkle_appcast" --download-url-prefix "https://github.com/ZimengXiong/winmux/releases/download/$(RELEASE_TAG)/" "$$release_dir"; \
 +	    test -f "$$appcast_path"; \
-+	else \
-+	    echo "Skipping appcast generation because GENERATE_APPCAST=$(GENERATE_APPCAST)"; \
-+	fi; \
- 	if [ "$(NOTARIZE)" = "1" ]; then \
- 	    test -n "$(NOTARYTOOL_PROFILE)"; \
- 	    xcrun notarytool submit "$$zip_path" --keychain-profile "$(NOTARYTOOL_PROFILE)" --wait; \
-@@ -129,16 +182,25 @@ release:
  	else \
- 	    echo "Skipping notarization because NOTARIZE=$(NOTARIZE)"; \
+-	    "$$sparkle_appcast" --download-url-prefix "https://github.com/ZimengXiong/winmux/releases/download/$(RELEASE_TAG)/" "$$appcast_stage"; \
++	    echo "Skipping appcast generation because GENERATE_APPCAST=$(GENERATE_APPCAST)"; \
  	fi; \
--	if [ "$(PUBLISH)" != "1" ]; then \
+-	python3 script/validate-appcast.py "$$appcast_stage/appcast.xml" "$(VERSION)" "https://github.com/ZimengXiong/winmux/releases/download/$(RELEASE_TAG)/$$app_name-$(VERSION).zip"; \
+-	cp "$$appcast_stage/appcast.xml" "$$appcast_path"; \
+-	test -f "$$appcast_path"'
++	if [ "$(NOTARIZE)" = "1" ]; then \
++	    test -n "$(NOTARYTOOL_PROFILE)"; \
++	    xcrun notarytool submit "$$zip_path" --keychain-profile "$(NOTARYTOOL_PROFILE)" --wait; \
++	    xcrun stapler staple "$$app_path"; \
++	    xcrun stapler validate "$$app_path"; \
++	    codesign --verify --deep --strict --verbose=2 "$$app_path"; \
++	    spctl --assess --type execute --verbose=4 "$$app_path"; \
++	    rm -f "$$zip_path"; \
++	    ditto -c -k --sequesterRsrc --keepParent "$$app_path" "$$zip_path"; \
++	else \
++	    echo "Skipping notarization because NOTARIZE=$(NOTARIZE)"; \
++	fi; \
 +	mkdir -p "$$dist_path/bin"; \
 +	ditto "$$app_path" "$$dist_path/$$app_name.app"; \
 +	/usr/bin/install -m 755 "$$cli_path" "$$dist_path/bin/winmux"; \
@@ -3191,26 +3214,23 @@ index d4f97ab6..f04d93ff 100644
 +	    echo "Publishing requires GENERATE_APPCAST=1" >&2; \
 +	    exit 1; \
 +	elif [ "$(PUBLISH)" != "1" ]; then \
- 	    echo "Skipping GitHub release publish because PUBLISH=$(PUBLISH)"; \
- 	elif /usr/bin/which gh >/dev/null 2>&1; then \
- 	    if gh release view "$(RELEASE_TAG)" >/dev/null 2>&1; then \
--	        gh release upload "$(RELEASE_TAG)" "$$zip_path" "$$appcast_path" --clobber; \
++	    echo "Skipping GitHub release publish because PUBLISH=$(PUBLISH)"; \
++	elif /usr/bin/which gh >/dev/null 2>&1; then \
++	    if gh release view "$(RELEASE_TAG)" >/dev/null 2>&1; then \
 +	        gh release upload "$(RELEASE_TAG)" "$$zip_path" "$$dist_zip_path" "$$appcast_path" --clobber; \
- 	    else \
- 	        if [ "$(RELEASE_NOTES)" = "auto" ]; then \
--	            gh release create "$(RELEASE_TAG)" "$$zip_path" "$$appcast_path" --title "$$app_name $(VERSION)" --generate-notes; \
++	    else \
++	        if [ "$(RELEASE_NOTES)" = "auto" ]; then \
 +	            gh release create "$(RELEASE_TAG)" "$$zip_path" "$$dist_zip_path" "$$appcast_path" --title "$$app_name $(VERSION)" --generate-notes; \
- 	        else \
--	            gh release create "$(RELEASE_TAG)" "$$zip_path" "$$appcast_path" --title "$$app_name $(VERSION)" --notes "$(RELEASE_NOTES)"; \
++	        else \
 +	            gh release create "$(RELEASE_TAG)" "$$zip_path" "$$dist_zip_path" "$$appcast_path" --title "$$app_name $(VERSION)" --notes "$(RELEASE_NOTES)"; \
- 	        fi; \
- 	    fi; \
- 	else \
-@@ -146,21 +208,209 @@ release:
- 	fi'
++	        fi; \
++	    fi; \
++	else \
++	    echo "warning: gh is not installed; built $$zip_path but did not publish a GitHub release" >&2; \
++	fi'
  
  install:
--	$(MAKE) release VERSION="$(VERSION)" CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)" DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)" PUBLISH=0
+-	$(MAKE) release VERSION="$(VERSION)" CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM="$(DEVELOPMENT_TEAM)"
 +	/bin/bash -lc 'cd "$(CURDIR)" && \
 +	set -euo pipefail && \
 +	local_install_root="$(LOCAL_INSTALL_ROOT)"; \

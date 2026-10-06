@@ -105,6 +105,15 @@ PATCHED_FILES = {
     "Sources/Common/util/WinMuxAny.swift",
     "makefile",
     "resources/default-config.toml",
+    # Patches 002-004 (dev.patch only)
+    "Sources/AppBundle/config/startAtLogin.swift",
+    "Sources/Common/appMetadata.swift",
+    "Sources/Common/util/showDiagnosticMessage.swift",
+    "project.yml",
+    "Sources/SparkleSupport/AutomaticUpdates.swift",
+    "Sources/WinMuxApp/WinMuxApp.swift",
+    # Kept out on the fork by the sync workflow (see sync-upstream-and-fix.yml)
+    ".github/workflows/release.yml",
 }
 
 # Files that are conflict-prone in upstream (frequently changed, config schemas)
@@ -112,7 +121,7 @@ CONFLICT_PRONE_FILES = set()
 
 # PRs already integrated in this fork
 ALREADY_INTEGRATED = {
-    24: ("Expand CLI automation and add configurable sidebar layering", "dev.patch", "001-cli-automation-and-sidebar-layer.patch"),
+    24: ("Expand CLI automation and add configurable sidebar layering", "main + dev.patch", "001-cli-automation-and-sidebar-layer.patch"),
 }
 
 # PRs to exclude (dependabot, docs-only, etc.)
