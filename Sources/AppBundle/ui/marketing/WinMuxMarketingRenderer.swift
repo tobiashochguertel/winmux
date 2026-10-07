@@ -23,15 +23,30 @@ public func renderWinMuxAppsProofImage(to outputURL: URL) throws {
 /// Exports a tiled Safari and Plasticity workspace using their measured split ratio.
 @MainActor
 public func renderWinMuxSafariPlasticityProofImage(to outputURL: URL) throws {
-    try renderMarketingView(WinMuxSafariPlasticityProofCanvas(), to: outputURL)
+    try renderMarketingView(
+        WinMuxSafariPlasticityProofCanvas(),
+        to: outputURL,
+        size: CGSize(width: 1_600, height: 928),
+        renderScale: 2
+    )
 }
 
 @MainActor
-private func renderMarketingView<Content: View>(_ rootView: Content, to outputURL: URL) throws {
-    let size = CGSize(width: 1_600, height: 900)
+private func renderMarketingView<Content: View>(
+    _ rootView: Content,
+    to outputURL: URL,
+    size: CGSize = CGSize(width: 1_600, height: 900),
+    renderScale: CGFloat = 1
+) throws {
+    let renderSize = CGSize(width: size.width * renderScale, height: size.height * renderScale)
     let content = rootView
         .frame(width: size.width, height: size.height)
+        .scaleEffect(renderScale, anchor: .topLeading)
+        .frame(width: renderSize.width, height: renderSize.height, alignment: .topLeading)
         .environment(\.colorScheme, .dark)
+        .environment(\.workspaceSidebarClockDate, Calendar.current.date(
+            from: DateComponents(year: 2026, month: 9, day: 5, hour: 10)
+        ))
 
     // Liquid Glass is composed by WindowServer. A detached NSHostingView cannot reproduce the
     // material: SwiftUI.ImageRenderer omits AppKit-backed surfaces, and cacheDisplay has no live
@@ -44,9 +59,9 @@ private func renderMarketingView<Content: View>(_ rootView: Content, to outputUR
     }
 
     let hostingView = NSHostingView(rootView: content)
-    hostingView.frame = CGRect(origin: .zero, size: size)
+    hostingView.frame = CGRect(origin: .zero, size: renderSize)
     let window = NSWindow(
-        contentRect: CGRect(origin: .zero, size: size),
+        contentRect: CGRect(origin: .zero, size: renderSize),
         styleMask: [.borderless],
         backing: .buffered,
         defer: false
@@ -61,8 +76,8 @@ private func renderMarketingView<Content: View>(_ rootView: Content, to outputUR
 
     if let screenFrame = NSScreen.main?.visibleFrame {
         window.setFrameOrigin(CGPoint(
-            x: screenFrame.midX - (size.width / 2),
-            y: screenFrame.midY - (size.height / 2)
+            x: screenFrame.midX - (renderSize.width / 2),
+            y: screenFrame.midY - (renderSize.height / 2)
         ))
     }
 
@@ -179,15 +194,45 @@ private struct WinMuxAppsProofCanvas: View {
 }
 
 private struct WinMuxSafariPlasticityProofCanvas: View {
-    private let safariWidth: CGFloat = 587.3637
-    private let plasticityWidth: CGFloat = 938.6363
-    private let tileHeight: CGFloat = 864
+    private let canvasHeight: CGFloat = 928
+    private let sidebarWidth: CGFloat = 280
+    private let reservedSidebarWidth: CGFloat = 50
+    private let topMargin: CGFloat = 56
+    private let sidebarTopMargin: CGFloat = 35
+    private let gutter: CGFloat = 8
+    // Expansion overlays the tiles; only the collapsed rail reserves layout space.
+    private var safariAspect: CGFloat { captureAspect("helium-current-retina.png") }
+    private var plasticityAspect: CGFloat { captureAspect("plasticity-current-retina.png") }
+    private var contentHeight: CGFloat {
+        min(
+            (1_600 - reservedSidebarWidth - 3 * gutter - 4 * windowTabGroupShellHorizontalInset())
+                / (safariAspect + plasticityAspect),
+            canvasHeight - topMargin - gutter - chromeHeight
+        )
+    }
+    private var safariWidth: CGFloat { contentHeight * safariAspect + 2 * windowTabGroupShellHorizontalInset() }
+    private var plasticityWidth: CGFloat { contentHeight * plasticityAspect + 2 * windowTabGroupShellHorizontalInset() }
+    private var chromeHeight: CGFloat {
+        MarketingFixtures.plasticityTabStrip.frame.height
+            + windowTabGroupShellTopInset() + windowTabGroupShellBottomInset()
+    }
+    private var tileHeight: CGFloat { contentHeight + chromeHeight }
+    // Keep the right and inter-window gaps fixed. Extra space stays beneath the sidebar.
+    private var tilesLeading: CGFloat { 1_600 - 2 * gutter - safariWidth - plasticityWidth }
+
+    private func captureAspect(_ name: String) -> CGFloat {
+        guard let image = MarketingAsset.image(named: name) else {
+            preconditionFailure("Missing marketing capture: \(name)")
+        }
+        return image.size.width / image.size.height
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             MarketingDesktopWallpaper(
                 imageName: "macos-blue-wallpaper.jpg",
-                darkeningOpacity: 0.46
+                darkeningOpacity: 0.46,
+                height: canvasHeight
             )
 
             LinearGradient(
@@ -198,28 +243,39 @@ private struct WinMuxSafariPlasticityProofCanvas: View {
 
             MarketingCapturedTabWindow(
                 strip: MarketingFixtures.safariCurrentTabStrip,
-                imageName: "safari-current-retina.png",
+                imageName: "helium-current-retina.png",
+                contentMode: .fit,
                 imageAlignment: .top,
                 shadowOpacity: 0
             )
             .frame(width: safariWidth, height: tileHeight)
-            .offset(x: 58, y: 28)
+            .offset(x: tilesLeading, y: topMargin)
 
             MarketingCapturedTabWindow(
                 strip: MarketingFixtures.plasticityTabStrip,
                 imageName: "plasticity-current-retina.png",
+                contentMode: .fit,
                 imageAlignment: .top,
                 shadowOpacity: 0
             )
             .frame(width: plasticityWidth, height: tileHeight)
-            .offset(x: 653.3637, y: 28)
+            .offset(x: tilesLeading + gutter + safariWidth, y: topMargin)
 
         }
-        .frame(width: 1_600, height: 900)
+        .frame(width: 1_600, height: canvasHeight)
         .overlay(alignment: .topLeading) {
-            if let sidebar = MarketingAsset.image(named: "winmux-retina.png") {
-                MarketingTranslucentCapturedSidebar(image: sidebar)
-            }
+            let sidebar = WorkspaceSidebarView(snapshot: MarketingFixtures.sidebarSnapshot)
+            sidebar
+                .frame(width: sidebarWidth, height: canvasHeight - sidebarTopMargin)
+                .background(
+                    Color(red: 0.012, green: 0.045, blue: 0.115).opacity(0.50),
+                    in: sidebar.sidebarShape
+                )
+                .clipShape(sidebar.sidebarShape)
+                .offset(y: sidebarTopMargin)
+        }
+        .overlay(alignment: .top) {
+            MarketingMenuBar()
         }
         .clipped()
     }
@@ -340,6 +396,7 @@ private enum MarketingAsset {
 private struct MarketingDesktopWallpaper: View {
     var imageName = "macos-sonoma-wallpaper.png"
     var darkeningOpacity = 0.0
+    var height: CGFloat = 900
 
     var body: some View {
         ZStack {
@@ -370,23 +427,20 @@ private struct MarketingDesktopWallpaper: View {
                 endPoint: .trailing
             )
         }
-        .frame(width: 1_600, height: 900)
+        .frame(width: 1_600, height: height)
         .clipped()
     }
 }
 
 private struct MarketingMenuBar: View {
     private var clockText: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "EEE MMM d  h:mm a"
-        return formatter.string(from: Date())
+        "Sat Sep 5  10:00 AM"
     }
 
     var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 21) {
             Image(systemName: "apple.logo")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
             Text("WinMux").fontWeight(.semibold)
             Text("File")
             Text("Edit")
@@ -394,22 +448,12 @@ private struct MarketingMenuBar: View {
             Text("Window")
             Text("Help")
             Spacer()
-            Image(systemName: "wifi")
-            Image(systemName: "battery.100percent")
             Text(clockText)
         }
-        .font(.system(size: 11.5, weight: .medium))
+        .font(.system(size: 13.25, weight: .medium))
         .foregroundStyle(Color.white.opacity(0.92))
-        .padding(.horizontal, 16)
-        .background {
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial)
-                Rectangle().fill(Color(red: 0.015, green: 0.055, blue: 0.13).opacity(0.50))
-            }
-        }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color.white.opacity(0.10)).frame(height: 0.5)
-        }
+        .padding(.horizontal, 18)
+        .frame(height: 27)
     }
 }
 
@@ -969,8 +1013,8 @@ private enum MarketingFixtures {
             WorkspaceSidebarWorkspaceViewModel(
                 name: "code",
                 projectId: defaultProject,
-                displayName: "Code",
-                sidebarLabel: "C",
+                displayName: "Design",
+                sidebarLabel: "D",
                 isGeneratedName: false,
                 monitorScopeId: "display-main",
                 monitorName: "Studio Display",
@@ -980,13 +1024,24 @@ private enum MarketingFixtures {
                     .init(kind: .tabGroup(.init(
                         representativeWindowId: 101,
                         workspaceName: "code",
-                        title: "WinMux development",
+                        title: "5X.plasticity",
                         windowCount: 3,
                         isFocused: true,
                         tabs: [
-                            sidebarWindow(101, workspace: "code", app: "Xcode", bundle: "com.apple.dt.Xcode", title: "SidebarView.swift", focused: true),
-                            sidebarWindow(102, workspace: "code", app: "Safari", bundle: "com.apple.Safari", title: "SwiftUI docs"),
-                            sidebarWindow(103, workspace: "code", app: "Terminal", bundle: "com.apple.Terminal", title: "Build and test"),
+                            sidebarWindow(101, workspace: "code", app: "Plasticity", bundle: "com.electron.plasticity", title: "5X.plasticity", focused: true),
+                            sidebarWindow(102, workspace: "code", app: "Autodesk Fusion", bundle: "com.autodesk.dls.streamer.scriptapp.Autodesk-Fusion", title: "Fusion"),
+                            sidebarWindow(103, workspace: "code", app: "Finder", bundle: "com.apple.finder", title: "Finder"),
+                        ]
+                    ))),
+                    .init(kind: .tabGroup(.init(
+                        representativeWindowId: 104,
+                        workspaceName: "code",
+                        title: "alpaca engineering",
+                        windowCount: 2,
+                        isFocused: false,
+                        tabs: [
+                            sidebarWindow(104, workspace: "code", app: "Helium", bundle: "net.imput.helium", title: "alpaca engineering"),
+                            sidebarWindow(105, workspace: "code", app: "Safari", bundle: "com.apple.Safari", title: "Safari"),
                         ]
                     ))),
                 ]
@@ -1082,19 +1137,19 @@ private enum MarketingFixtures {
             tab(
                 601,
                 workspace: "design",
-                app: "Safari",
-                bundle: "com.apple.Safari",
-                path: "/Applications/Safari.app",
+                app: "Helium",
+                bundle: "net.imput.helium",
+                path: "/Applications/Helium.app",
                 title: "alpaca engineering",
                 active: true
             ),
             tab(
                 602,
                 workspace: "design",
-                app: "Google Chrome",
-                bundle: "com.google.Chrome",
-                path: "/Applications/Google Chrome.app",
-                title: "Chrome"
+                app: "Safari",
+                bundle: "com.apple.Safari",
+                path: "/Applications/Safari.app",
+                title: "Safari"
             ),
         ],
         cornerRadius: 14
