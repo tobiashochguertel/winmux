@@ -13,10 +13,7 @@ public struct MoveNodeToMonitorCmdArgs: CmdArgs {
             "--focus-follows-window": trueBoolFlag(\.focusFollowsWindow),
             "--fail-if-noop": trueBoolFlag(\.failIfNoop),
         ],
-        posArgs: [
-            dashDashArg(mandatory: false),
-            newMandatoryPosArgParser(\.target, parseTarget, placeholder: MonitorTarget.cases.joinedCliArgs),
-        ],
+        posArgs: [newMandatoryPosArgParser(\.target, parseTarget, placeholder: MonitorTarget.cases.joinedCliArgs)],
     )
 
     public init(target: MonitorTarget) {

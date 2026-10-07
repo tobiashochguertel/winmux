@@ -34,7 +34,6 @@ extension Command {
         switch self {
             case is BalanceSizesCommand,
                  is ConfigCommand,
-                 is CreateProjectCommand,
                  is DebugWindowsCommand,
                  is FlattenWorkspaceTreeCommand,
                  is FocusBackAndForthCommand,
@@ -47,7 +46,6 @@ extension Command {
                  is ListExecEnvVarsCommand,
                  is ListModesCommand,
                  is ListMonitorsCommand,
-                 is ListProjectsCommand,
                  is ListWindowsCommand,
                  is ListWorkspacesCommand,
                  is ModeCommand,
@@ -59,19 +57,15 @@ extension Command {
                  is MoveWorkspaceToMonitorCommand,
                  is OpenSidebarCommand,
                  is ProjectCommand,
-                 is RenameProjectCommand,
                  is ResizeCommand,
                  is SplitCommand,
                  is StackWithCommand,
-                 is SetProjectColorCommand,
                  is SummonWorkspaceCommand,
                  is SwapCommand,
                  is VolumeCommand,
                  is WorkspaceBackAndForthCommand,
                  is WorkspaceCommand:
                 true
-            case is DeleteProjectCommand:
-                false
             default:
                 false
         }

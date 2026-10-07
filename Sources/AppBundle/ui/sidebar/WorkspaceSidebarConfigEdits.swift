@@ -65,12 +65,9 @@ private func updateWorkspaceSidebarScalarConfig(
 }
 
 @MainActor
-func persistWorkspaceSidebarMenuBarReserveHeight(_ height: Int, targetUrl explicitTargetUrl: URL? = nil) throws -> URL {
-    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
-    let currentText = try readWorkspaceSidebarConfig(
-        at: targetUrl,
-        contentsWhenMissing: starterConfigText(),
-    )
+func persistWorkspaceSidebarMenuBarReserveHeight(_ height: Int) throws -> URL {
+    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? starterConfigText()
     let updatedText = updateWorkspaceSidebarMenuBarReserveConfig(in: currentText, height: height)
     if let parent = targetUrl.deletingLastPathComponent().takeIf({ $0.path != targetUrl.path }) {
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -80,15 +77,9 @@ func persistWorkspaceSidebarMenuBarReserveHeight(_ height: Int, targetUrl explic
 }
 
 @MainActor
-func persistWorkspaceSidebarProjectDeletionAction(
-    _ action: WorkspaceProjectDeletionAction,
-    targetUrl explicitTargetUrl: URL? = nil,
-) throws -> URL {
-    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
-    let currentText = try readWorkspaceSidebarConfig(
-        at: targetUrl,
-        contentsWhenMissing: starterConfigText(),
-    )
+func persistWorkspaceSidebarProjectDeletionAction(_ action: WorkspaceProjectDeletionAction) throws -> URL {
+    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? starterConfigText()
     let updatedText = updateWorkspaceSidebarProjectDeletionActionConfig(in: currentText, action: action)
     if let parent = targetUrl.deletingLastPathComponent().takeIf({ $0.path != targetUrl.path }) {
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
@@ -196,13 +187,9 @@ private func updateWorkspaceSidebarKeyValueSectionConfig(
 }
 
 @MainActor
-func persistWorkspaceSidebarLabel(
-    workspaceName: String,
-    label: String?,
-    targetUrl explicitTargetUrl: URL? = nil,
-) throws {
-    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
-    let currentText = try readWorkspaceSidebarConfig(at: targetUrl, contentsWhenMissing: "")
+func persistWorkspaceSidebarLabel(workspaceName: String, label: String?) throws {
+    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? ""
     let updatedText = updateWorkspaceSidebarLabelConfig(
         in: currentText,
         workspaceName: workspaceName,
@@ -215,13 +202,9 @@ func persistWorkspaceSidebarLabel(
 }
 
 @MainActor
-func persistWorkspaceSidebarProjectLabel(
-    projectId: String,
-    label: String?,
-    targetUrl explicitTargetUrl: URL? = nil,
-) throws {
-    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
-    let currentText = try readWorkspaceSidebarConfig(at: targetUrl, contentsWhenMissing: "")
+func persistWorkspaceSidebarProjectLabel(projectId: String, label: String?) throws {
+    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? ""
     let updatedText = updateWorkspaceSidebarProjectLabelConfig(
         in: currentText,
         projectId: projectId,
@@ -234,40 +217,11 @@ func persistWorkspaceSidebarProjectLabel(
 }
 
 @MainActor
-func persistWorkspaceSidebarProjectColor(
-    projectId: String,
-    colorHex: String?,
-    targetUrl explicitTargetUrl: URL? = nil,
-) throws {
-    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
-    let currentText = try readWorkspaceSidebarConfig(at: targetUrl, contentsWhenMissing: "")
+func persistWorkspaceSidebarProjectColor(projectId: String, colorHex: String?) throws {
+    let targetUrl = preferredWorkspaceSidebarConfigUrl()
+    let currentText = (try? String(contentsOf: targetUrl, encoding: .utf8)) ?? ""
     let updatedText = updateWorkspaceSidebarProjectColorConfig(
         in: currentText,
-        projectId: projectId,
-        colorHex: colorHex,
-    )
-    if let parent = targetUrl.deletingLastPathComponent().takeIf({ $0.path != targetUrl.path }) {
-        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-    }
-    try updatedText.write(to: targetUrl, atomically: true, encoding: .utf8)
-}
-
-@MainActor
-func persistWorkspaceSidebarProjectMetadata(
-    projectId: String,
-    label: String?,
-    colorHex: String?,
-    targetUrl explicitTargetUrl: URL? = nil,
-) throws {
-    let targetUrl = explicitTargetUrl ?? preferredWorkspaceSidebarConfigUrl()
-    let currentText = try readWorkspaceSidebarConfig(at: targetUrl, contentsWhenMissing: "")
-    let textWithLabel = updateWorkspaceSidebarProjectLabelConfig(
-        in: currentText,
-        projectId: projectId,
-        label: label,
-    )
-    let updatedText = updateWorkspaceSidebarProjectColorConfig(
-        in: textWithLabel,
         projectId: projectId,
         colorHex: colorHex,
     )
@@ -280,20 +234,6 @@ func persistWorkspaceSidebarProjectMetadata(
 @MainActor
 private func preferredWorkspaceSidebarConfigUrl() -> URL {
     preferredEditableConfigUrl()
-}
-
-private func readWorkspaceSidebarConfig(at targetUrl: URL, contentsWhenMissing: @autoclosure () -> String) throws -> String {
-    do {
-        return try String(contentsOf: targetUrl, encoding: .utf8)
-    } catch {
-        let cocoaError = error as NSError
-        guard cocoaError.domain == NSCocoaErrorDomain,
-              cocoaError.code == NSFileReadNoSuchFileError
-        else {
-            throw error
-        }
-        return contentsWhenMissing()
-    }
 }
 
 private func workspaceSidebarLabelKey(in line: String) -> String? {
@@ -320,20 +260,8 @@ private func tomlWorkspaceSidebarKeyValueLine(key: String, value: String) -> Str
     "\"\(tomlEscape(key))\" = \"\(tomlEscape(value))\""
 }
 
-func tomlEscape(_ raw: String) -> String {
-    raw.unicodeScalars.map { scalar in
-        switch scalar.value {
-            case 0x08: "\\b"
-            case 0x09: "\\t"
-            case 0x0A: "\\n"
-            case 0x0C: "\\f"
-            case 0x0D: "\\r"
-            case 0x22: "\\\""
-            case 0x5C: "\\\\"
-            case 0x00 ... 0x1F, 0x7F ... 0x9F:
-                String(format: "\\u%04X", scalar.value)
-            default:
-                String(scalar)
-        }
-    }.joined()
+private func tomlEscape(_ raw: String) -> String {
+    raw
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
 }

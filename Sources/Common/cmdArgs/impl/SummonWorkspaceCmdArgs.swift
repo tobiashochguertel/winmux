@@ -8,10 +8,7 @@ public struct SummonWorkspaceCmdArgs: CmdArgs {
         flags: [
             "--fail-if-noop": trueBoolFlag(\.failIfNoop),
         ],
-        posArgs: [
-            dashDashArg(mandatory: false),
-            newMandatoryPosArgParser(\.target, parseWorkspaceName, placeholder: "<workspace>"),
-        ],
+        posArgs: [newMandatoryPosArgParser(\.target, parseWorkspaceName, placeholder: "<workspace>")],
     )
 
     public var target: Lateinit<WorkspaceName> = .uninitialized

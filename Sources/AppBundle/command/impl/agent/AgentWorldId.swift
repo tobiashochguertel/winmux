@@ -8,9 +8,6 @@ func currentAgentWorldId() -> String {
     for workspace in workspaces {
         lines += agentWorldLines(for: workspace)
     }
-    for window in macosMinimizedWindowsContainer.children.filterIsInstance(of: Window.self).sortedBy(\.windowId) {
-        lines.append(agentMinimizedWorldLine(for: window))
-    }
     return stableAgentHash(lines.joined(separator: "\n"))
 }
 
@@ -39,16 +36,6 @@ private func agentWorldLine(for window: Window) -> String {
         "fullscreen:\(window.isFullscreen)",
         "noOuterGaps:\(window.noOuterGapsInFullscreen)",
     ].joined(separator: "|")
-}
-
-@MainActor
-private func agentMinimizedWorldLine(for window: Window) -> String {
-    let origin = switch window.layoutReason {
-        case .standard: "standard"
-        case .macos(let previousParentKind, let previousWorkspaceName):
-            "\(previousParentKind.rawValue):\(previousWorkspaceName ?? "nil")"
-    }
-    return agentWorldLine(for: window) + "|origin:\(origin)"
 }
 
 @MainActor
