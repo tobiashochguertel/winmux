@@ -22,7 +22,7 @@ TCC_SERVICES ?= Accessibility
 SPARKLE_PUBLIC_KEY ?= KYPiGyMjSa5z0mL6Kh42Dnrms6n5LJbk8WiyCM4ghnc=
 ARGS ?=
 
-.PHONY: generate xcodeproj build build-clean run run-clean cli cli-release release install install-staged verify-installed installed clean
+.PHONY: generate xcodeproj build build-clean run run-clean cli cli-release check release install install-staged verify-installed installed clean
 
 generate:
 	/bin/bash -lc 'cd "$(CURDIR)" && \
@@ -109,6 +109,15 @@ cli-release:
 	archs="$$(/usr/bin/lipo -archs "$$cli_stage_path")" && \
 	case " $$archs " in *" arm64 "*) ;; *) echo "CLI is missing arm64" >&2; exit 1;; esac && \
 	case " $$archs " in *" x86_64 "*) ;; *) echo "CLI is missing x86_64" >&2; exit 1;; esac'
+
+check:
+	/bin/bash -lc 'cd "$(CURDIR)" && \
+	set -euo pipefail && \
+	source ./script/setup.sh && \
+	swift test && \
+	python3 -m unittest script/test_validate_appcast.py && \
+	swift package resolve && \
+	git diff --exit-code -- Package.resolved'
 
 release:
 	@if [ "$(GENERATE_APPCAST)" = "1" ] && [ "$(ALLOW_APP_ONLY_PROTOCOL_UPDATE)" != "1" ]; then \

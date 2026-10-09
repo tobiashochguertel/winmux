@@ -106,7 +106,7 @@ index f04d93ff..cd34d0a1 100644
  install-staged:
  	/bin/bash -lc 'cd "$(CURDIR)" && \
 diff --git a/project.yml b/project.yml
-index b795ed26..8f44d266 100644
+index 91ec3bd4..46a0a425 100644
 --- a/project.yml
 +++ b/project.yml
 @@ -22,8 +22,8 @@ targets:
@@ -120,7 +120,7 @@ index b795ed26..8f44d266 100644
          SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
      sources:
        - "Sources/WinMuxApp"
-@@ -46,10 +46,10 @@ targets:
+@@ -49,10 +49,10 @@ targets:
        configs:
          Debug:
            PRODUCT_NAME: WinMux-Debug
@@ -130,6 +130,6 @@ index b795ed26..8f44d266 100644
            PRODUCT_NAME: WinMux
 -          PRODUCT_BUNDLE_IDENTIFIER: com.zimengxiong.winmux
 +          PRODUCT_BUNDLE_IDENTIFIER: com.tobiashochguertel.winmux
+           ENABLE_HARDENED_RUNTIME: YES
            SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
            GCC_TREAT_WARNINGS_AS_ERRORS: YES
-     entitlements:

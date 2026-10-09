@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ShortcutBehaviorSettingsView: View {
     @ObservedObject var model: ShortcutSettingsModel
+    @State private var doubleSidedWindows = ExperimentalUISettings().doubleSidedWindows
     @State private var automaticallyTileNewWindows = config.automaticallyTileNewWindows
     @State private var autoAddNewWindowsToTabGroup = config.autoAddNewWindowsToTabGroup
     @State private var enableShakeToToggleTiling = config.enableShakeToToggleTiling
@@ -21,6 +22,19 @@ struct ShortcutBehaviorSettingsView: View {
                 SettingsToggle("Tile new windows automatically", isOn: $automaticallyTileNewWindows, help: "Place new windows in the current tiled layout.") { persistRootBool("automatically-tile-new-windows", automaticallyTileNewWindows) }
                 SettingsToggle("Add new windows to the current tab group", isOn: $autoAddNewWindowsToTabGroup, help: "Keep new windows in the selected stack instead of creating a new tile.") { persistRootBool("auto-add-new-windows-to-tab-group", autoAddNewWindowsToTabGroup) }
                 SettingsToggle("Unhide macOS-hidden apps", isOn: $automaticallyUnhideMacosHiddenApps, help: "Restore apps macOS has hidden when they receive focus.") { persistRootBool("automatically-unhide-macos-hidden-apps", automaticallyUnhideMacosHiddenApps) }
+            }
+            SettingsSection("Window pairs") {
+                SettingsToggle("Double-sided windows", isOn: $doubleSidedWindows, help: "Replace two-window tab strips with two sides. Option-click anywhere in the window or press Option-Tab to flip.") {
+                    var settings = ExperimentalUISettings()
+                    settings.doubleSidedWindows = doubleSidedWindows
+                    if doubleSidedWindows { requestScreenRecordingPermissionsIfNeeded() }
+                    scheduleRefreshSession(.menuBarButton)
+                }
+                Text("Option-click anywhere in the window or press Option-Tab to flip between two windows. Three or more windows use tabs. Window tabs must be enabled. Rotation uses Screen Recording access and respects Reduce Motion.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
             }
             SettingsSection("Interaction") {
                 SettingsToggle("Shake to toggle tiling", isOn: $enableShakeToToggleTiling, help: "Shake a window by its title bar to switch between floating and tiled.") { persistRootBool("enable-shake-to-toggle-tiling", enableShakeToToggleTiling) }
@@ -292,7 +306,7 @@ private struct SettingsStepper: View {
         HStack(spacing: 10) {
             Text(title)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Slider(value: Binding(get: { Double(value) }, set: { value = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
+            Slider(value: Binding(get: { Double(value) }, set: { value = Int($0.rounded()) }), in: Double(range.lowerBound)...Double(range.upperBound))
                 .frame(width: 96)
             TextField("", value: $value, format: .number)
                 .textFieldStyle(.roundedBorder)

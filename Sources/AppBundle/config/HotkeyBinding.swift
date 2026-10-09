@@ -237,3 +237,7 @@ private func tapModifiersPressed(in modifierFlags: NSEvent.ModifierFlags) -> Set
 @MainActor func tapBindingPressedModifiersForTests() -> Set<TapModifierKey> {
     pressedTapModifiers
 }
+
+@MainActor func hasPendingTapBindingForTests() -> Bool {
+    !pendingTapBindings.isEmpty || !pendingTapTriggerTasks.isEmpty
+}

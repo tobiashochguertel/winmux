@@ -2,7 +2,19 @@ import AppKit
 import Foundation
 import SwiftUI
 
+private struct WorkspaceSidebarClockDateKey: EnvironmentKey {
+    static let defaultValue: Date? = nil
+}
+
+extension EnvironmentValues {
+    var workspaceSidebarClockDate: Date? {
+        get { self[WorkspaceSidebarClockDateKey.self] }
+        set { self[WorkspaceSidebarClockDateKey.self] = newValue }
+    }
+}
+
 struct WorkspaceSidebarStatusView: View {
+    @Environment(\.workspaceSidebarClockDate) private var clockDate
     let sectionWidth: CGFloat
     let isCompact: Bool
     let showsSeconds: Bool
@@ -14,7 +26,7 @@ struct WorkspaceSidebarStatusView: View {
             if isCompact {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     WorkspaceSidebarCompactClockCard(
-                        date: context.date,
+                        date: clockDate ?? context.date,
                         sectionWidth: sectionWidth,
                         showsSeconds: showsSeconds,
                     )
@@ -22,7 +34,7 @@ struct WorkspaceSidebarStatusView: View {
             } else {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     WorkspaceSidebarExpandedStatusCard(
-                        date: context.date,
+                        date: clockDate ?? context.date,
                         sectionWidth: sectionWidth,
                         showsSeconds: showsSeconds,
                         showsDate: showsDate,
