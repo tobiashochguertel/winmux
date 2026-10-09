@@ -51,15 +51,17 @@ Current patches:
 
 ### Upstream CI/release workflows
 
-Upstream ships `.github/workflows/ci.yml` and `release.yml`, which must
-**never run on the fork**: `ci.yml` invokes makefile targets the fork does
-not have, and `release.yml` publishes/signs releases on every push to
-`main` (which would fail without signing secrets or, worse, publish the
-wrong artifact). Both files are listed at the end of `PATCHED_FILES` so
-they are reverted to upstream's version before every merge (keeping the
-merge conflict-free), and the sync workflow deletes them again after each
-merge. If upstream adds more workflows that would misbehave here, list
-them the same way.
+Upstream ships `.github/workflows/release.yml`, which must **never run on
+the fork**: it publishes/signs releases on every push to `main` and would
+fail without signing secrets or, worse, publish the wrong artifact. It is
+listed at the end of `PATCHED_FILES` so it is reverted to upstream's
+version before every merge (keeping the merge conflict-free), and the
+sync workflow deletes it again after each merge. If upstream adds more
+workflows that would misbehave here, list them the same way.
+
+Upstream's `ci.yml` is intentionally kept tracked: it runs `make check`,
+which exists on the fork, so it provides useful macOS CI on pushes and
+PRs and needs no special handling.
 
 ## How the sync works
 
@@ -94,10 +96,10 @@ git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD  # → nothing to do
 git merge "$MERGE_REF" --no-edit -m "chore: merge upstream …"
 #    If this conflicts on non-patched files → FAIL LOUDLY (merge --abort, exit 1)
 
-# 6. Remove upstream CI/release workflows
-#    (they must never run on the fork — see above)
-git rm --ignore-unmatch .github/workflows/ci.yml .github/workflows/release.yml
-git commit -m "chore: drop upstream CI/release workflows on fork [skip ci]"
+# 6. Remove upstream release workflow
+#    (it must never run on the fork — see above)
+git rm --ignore-unmatch .github/workflows/release.yml
+git commit -m "chore: drop upstream release workflow on fork [skip ci]"
 
 # 7. Re-apply all patches via apply_patches.sh
 .github/scripts/apply_patches.sh
@@ -309,6 +311,6 @@ repeats.
 - **Keep patches minimal** — one logical change per `.patch` file
 - **Name patches with zero-padded numbers** — `NNN-description.patch` (applied in alphabetical order)
 - **Only list modified files in `PATCHED_FILES`** — new files don't need reverting
-- **Never keep upstream CI/release workflows on the fork** — they need upstream's secrets and makefile targets; they are reverted before merge and removed after merge
+- **Never keep upstream's `release.yml` on the fork** — it needs signing secrets the fork does not have; it is reverted before merge and removed after merge. `ci.yml` is fine — `make check` exists
 - **Test locally** before pushing: `git apply --check`, `swift build`, `swift test`
 - **Verify idempotency** — `git apply --reverse --check` must pass (so `apply_patches.sh` can detect already-applied patches)
