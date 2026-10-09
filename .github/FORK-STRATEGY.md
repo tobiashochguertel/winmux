@@ -48,6 +48,7 @@ Current patches:
 | Fork identity + TCC reset | `002-fork-identity-and-tcc-reset.patch` | 6 modified files | `dev.patch` |
 | Remove Sparkle updater | `003-remove-sparkle-updater.patch` | 1 modified file | `dev.patch` |
 | Restore updater with fork appcast | `004-restore-updater-fork-appcast.patch` | 2 modified files | `dev.patch` |
+| makefile `check` target | `005-makefile-check-target.patch` | 1 modified file | `dev.patch` |
 
 ### Upstream CI/release workflows
 
