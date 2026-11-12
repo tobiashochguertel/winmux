@@ -45,6 +45,23 @@ Current patches:
 | Patch | Patch file | Files | Branch |
 |-------|-----------|-------|--------|
 | CLI automation + sidebar layering (PR #24) | `001-cli-automation-and-sidebar-layer.patch` | 57 modified files (see `PATCHED_FILES`) | `main` + `dev.patch` |
+| Fork identity + TCC reset | `002-fork-identity-and-tcc-reset.patch` | 6 modified files | `dev.patch` |
+| Remove Sparkle updater | `003-remove-sparkle-updater.patch` | 1 modified file | `dev.patch` |
+| Restore updater with fork appcast | `004-restore-updater-fork-appcast.patch` | 2 modified files | `dev.patch` |
+
+### Upstream CI/release workflows
+
+Upstream ships `.github/workflows/release.yml`, which must **never run on
+the fork**: it publishes/signs releases on every push to `main` and would
+fail without signing secrets or, worse, publish the wrong artifact. It is
+listed at the end of `PATCHED_FILES` so it is reverted to upstream's
+version before every merge (keeping the merge conflict-free), and the
+sync workflow deletes it again after each merge. If upstream adds more
+workflows that would misbehave here, list them the same way.
+
+Upstream's `ci.yml` is intentionally kept tracked: it runs `make check`,
+which exists on the fork, so it provides useful macOS CI on pushes and
+PRs and needs no special handling.
 
 ## How the sync works
 
@@ -79,20 +96,40 @@ git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD  # → nothing to do
 git merge "$MERGE_REF" --no-edit -m "chore: merge upstream …"
 #    If this conflicts on non-patched files → FAIL LOUDLY (merge --abort, exit 1)
 
-# 6. Re-apply all patches via apply_patches.sh
+# 6. Remove upstream release workflow
+#    (it must never run on the fork — see above)
+git rm --ignore-unmatch .github/workflows/release.yml
+git commit -m "chore: drop upstream release workflow on fork [skip ci]"
+
+# 7. Re-apply all patches via apply_patches.sh
 .github/scripts/apply_patches.sh
 #    For each .github/patches/*.patch:
 #      - If git apply --reverse --check passes → already applied, skip
 #      - If git apply --check passes → git apply, continue
 #      - Otherwise → FAIL LOUDLY (exit 1)
 
-# 7. Commit the re-applied patches
+# 8. Commit the re-applied patches
 git add -A
 git commit -m "fix: re-apply custom patches after upstream merge …"
 
-# 8. Push
+# 9. Push
 git push origin <branch>
 ```
+
+### Push permissions: `FORK_SYNC_PAT`
+
+Upstream merges can carry changes to `.github/workflows/` — for example
+`release.yml` and `ci.yml` introduced by upstream v0.5.6. The default
+`GITHUB_TOKEN` may not push commits that add, modify, or delete files
+under `.github/workflows/` (it lacks the `workflow` scope), which makes
+the final `git push` fail even though the merge itself succeeded.
+
+The workflow therefore checks out (and pushes) with the `FORK_SYNC_PAT`
+repository secret when present, falling back to `GITHUB_TOKEN` otherwise.
+`FORK_SYNC_PAT` must be a PAT with `repo` **and** `workflow` scopes. If
+the secret is absent and a sync pushes workflow changes, the sync will
+fail at the push step — add or rotate the secret rather than editing
+upstream workflow files to dodge the check.
 
 ### Why revert-then-repatch instead of `--strategy-option=theirs`?
 
@@ -274,5 +311,6 @@ repeats.
 - **Keep patches minimal** — one logical change per `.patch` file
 - **Name patches with zero-padded numbers** — `NNN-description.patch` (applied in alphabetical order)
 - **Only list modified files in `PATCHED_FILES`** — new files don't need reverting
+- **Never keep upstream's `release.yml` on the fork** — it needs signing secrets the fork does not have; it is reverted before merge and removed after merge. `ci.yml` is fine — `make check` exists
 - **Test locally** before pushing: `git apply --check`, `swift build`, `swift test`
 - **Verify idempotency** — `git apply --reverse --check` must pass (so `apply_patches.sh` can detect already-applied patches)

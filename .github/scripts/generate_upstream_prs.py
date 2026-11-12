@@ -105,6 +105,15 @@ PATCHED_FILES = {
     "Sources/Common/util/WinMuxAny.swift",
     "makefile",
     "resources/default-config.toml",
+    # Patches 002-004 (dev.patch only)
+    "Sources/AppBundle/config/startAtLogin.swift",
+    "Sources/Common/appMetadata.swift",
+    "Sources/Common/util/showDiagnosticMessage.swift",
+    "project.yml",
+    "Sources/SparkleSupport/AutomaticUpdates.swift",
+    "Sources/WinMuxApp/WinMuxApp.swift",
+    # Kept out on the fork by the sync workflow (see sync-upstream-and-fix.yml)
+    ".github/workflows/release.yml",
 }
 
 # Files that are conflict-prone in upstream (frequently changed, config schemas)
