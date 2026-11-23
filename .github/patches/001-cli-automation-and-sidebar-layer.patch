@@ -11,18 +11,10 @@ index a5891016..2d168519 100644
              path: "Sources/AppBundleTests",
          ),
 diff --git a/README.md b/README.md
-index b1fa48c2..0a7ee838 100644
+index 87b77ef6..c1f7d200 100644
 --- a/README.md
 +++ b/README.md
-@@ -26,6 +26,7 @@ contrast across the sidebar, tab groups, and switcher:
- ```toml
- [workspace-sidebar]
-     auto-hide = true
-+    stay-on-top = false # Let the Dock appear above the sidebar.
-     chrome-style = 'solid'
-     solid-chrome-color = 'lavender' # Choose any color shown in Appearance, including custom.
- ```
-@@ -165,6 +166,106 @@ Release builds are signed with the project's Apple Development certificate. They
+@@ -166,6 +166,106 @@ Release builds are signed with the project's Apple Development certificate. They
  
  WinMux checks GitHub Releases for signed updates automatically. You can also select **Check for Updates…** from the menu bar.
  
@@ -698,30 +690,6 @@ index ac022e35..4b341add 100644
  @MainActor
  private func agentWorldLine(for group: TilingContainer) -> String {
      [
-diff --git a/Sources/AppBundle/config/Config.swift b/Sources/AppBundle/config/Config.swift
-index c2141599..ccb113f3 100644
---- a/Sources/AppBundle/config/Config.swift
-+++ b/Sources/AppBundle/config/Config.swift
-@@ -80,6 +80,7 @@ enum ShortcutsPreset: String, Equatable, Sendable {
- struct WorkspaceSidebarConfig: ConvenienceCopyable, Equatable, Sendable {
-     var enabled: Bool = false
-     var enableFocus: Bool = false
-+    var stayOnTop: Bool = true
-     var autoHide: Bool = false
-     var alwaysExpanded: Bool = false
-     var collapsedWidth: Int = 44
-diff --git a/Sources/AppBundle/config/parseWorkspaceSidebar.swift b/Sources/AppBundle/config/parseWorkspaceSidebar.swift
-index 049ac321..9ce22c3d 100644
---- a/Sources/AppBundle/config/parseWorkspaceSidebar.swift
-+++ b/Sources/AppBundle/config/parseWorkspaceSidebar.swift
-@@ -4,6 +4,7 @@ import TOMLKit
- private let workspaceSidebarParser: [String: any ParserProtocol<WorkspaceSidebarConfig>] = [
-     "enabled": Parser(\.enabled, parseBool),
-     "enable-focus": Parser(\.enableFocus, parseBool),
-+    "stay-on-top": Parser(\.stayOnTop, parseBool),
-     "auto-hide": Parser(\.autoHide, parseBool),
-     "always-expanded": Parser(\.alwaysExpanded, parseBool),
-     "collapsed-width": Parser(\.collapsedWidth, parseWorkspaceSidebarWidth),
 diff --git a/Sources/AppBundle/server.swift b/Sources/AppBundle/server.swift
 index c12de884..872ad113 100644
 --- a/Sources/AppBundle/server.swift
@@ -1041,28 +1009,11 @@ index db18b29e..0f41ceab 100644
  }
  
  @MainActor
-diff --git a/Sources/AppBundle/ui/core/WinMuxPanelLayer.swift b/Sources/AppBundle/ui/core/WinMuxPanelLayer.swift
-index 8296c060..b6a5033c 100644
---- a/Sources/AppBundle/ui/core/WinMuxPanelLayer.swift
-+++ b/Sources/AppBundle/ui/core/WinMuxPanelLayer.swift
-@@ -27,4 +27,12 @@ extension NSPanelHud {
-     func applyWinMuxLayer(_ layer: WinMuxPanelLayer) {
-         level = layer.level
-     }
-+
-+    func applyWorkspaceSidebarLayer(stayOnTop: Bool) {
-+        level = workspaceSidebarPanelLevel(stayOnTop: stayOnTop)
-+    }
-+}
-+
-+func workspaceSidebarPanelLevel(stayOnTop: Bool) -> NSWindow.Level {
-+    stayOnTop ? WinMuxPanelLayer.workspaceSidebar.level : .floating
- }
 diff --git a/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift b/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift
-index 3ee34363..a5e59b9a 100644
+index d79c5305..ef7a45ca 100644
 --- a/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift
 +++ b/Sources/AppBundle/ui/settings/ConfigSettingsViews.swift
-@@ -66,7 +66,6 @@ struct ShortcutBehaviorSettingsView: View {
+@@ -65,7 +65,6 @@ struct ShortcutBehaviorSettingsView: View {
                  }
              }
          }
@@ -1070,23 +1021,7 @@ index 3ee34363..a5e59b9a 100644
      }
  
      private func persistRootBool(_ key: String, _ value: Bool) { persistConfig(section: nil, key: key, value: value ? "true" : "false") }
-@@ -80,6 +79,7 @@ struct ShortcutAppearanceSettingsView: View {
-     @ObservedObject var model: ShortcutSettingsModel
-     @State private var sidebarEnabled = config.workspaceSidebar.enabled
-     @State private var sidebarFocusEnabled = config.workspaceSidebar.enableFocus
-+    @State private var sidebarStayOnTop = config.workspaceSidebar.stayOnTop
-     @State private var sidebarAutoHide = config.workspaceSidebar.autoHide
-     @State private var sidebarAlwaysExpanded = config.workspaceSidebar.alwaysExpanded
-     @State private var showStatusPills = config.workspaceSidebar.showStatusPills
-@@ -122,6 +122,7 @@ struct ShortcutAppearanceSettingsView: View {
-             SettingsSection("Sidebar") {
-                 SettingsToggle("Show sidebar", isOn: $sidebarEnabled, help: "Show the workspace rail on configured displays.") { sidebarBool("enabled", sidebarEnabled) }
-                 SettingsToggle("Focus sidebar monitor only", isOn: $sidebarFocusEnabled, help: "Show the sidebar only on the focused monitor when monitor scope allows it.") { sidebarBool("enable-focus", sidebarFocusEnabled) }
-+                SettingsToggle("Keep sidebar above Dock", isOn: $sidebarStayOnTop, help: "Keep the sidebar above the Dock. Turn this off to let the Dock appear over it.") { sidebarBool("stay-on-top", sidebarStayOnTop) }
-                 SettingsToggle("Reveal sidebar at the display edge", isOn: $sidebarAutoHide, help: "Hide the compact rail until the pointer reaches the left edge.") { sidebarBool("auto-hide", sidebarAutoHide) }
-                 SettingsToggle("Keep sidebar expanded", isOn: $sidebarAlwaysExpanded, help: "Reserve the full sidebar width for tiled windows.") { sidebarBool("always-expanded", sidebarAlwaysExpanded) }
-                 SettingsStepper("Expanded width", value: $sidebarWidth, range: 120...480, help: "Width of the fully expanded sidebar.") { sidebarInt("width", sidebarWidth) }
-@@ -153,7 +154,6 @@ struct ShortcutAppearanceSettingsView: View {
+@@ -154,7 +153,6 @@ struct ShortcutAppearanceSettingsView: View {
                  SettingsStepper("Outer bottom", value: $outerBottomGap, range: 0...120, help: "Inset at the bottom display edge.") { persist("gaps", "outer.bottom", "\(outerBottomGap)") }
              }
          }
@@ -1094,7 +1029,7 @@ index 3ee34363..a5e59b9a 100644
      }
  
      private func sidebarBool(_ key: String, _ value: Bool) { persist("workspace-sidebar", key, value ? "true" : "false") }
-@@ -201,7 +201,7 @@ struct ShortcutAutomationSettingsView: View {
+@@ -202,7 +200,7 @@ struct ShortcutAutomationSettingsView: View {
              }
          }
          .task { loadCommands() }
@@ -1290,31 +1225,6 @@ index 6a9c4a0b..f428afe7 100644
 +        }
 +    }.joined()
  }
-diff --git a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanel.swift b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanel.swift
-index 4435af74..802578a8 100644
---- a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanel.swift
-+++ b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanel.swift
-@@ -928,6 +928,7 @@ extension WorkspaceSidebarPanel {
-     }
- 
-     func refresh(on monitor: Monitor) {
-+        applyWorkspaceSidebarLayer(stayOnTop: config.workspaceSidebar.stayOnTop)
-         guard let layout = currentSidebarPanelLayout(on: monitor) else {
-             cancelExpansionWork()
-             resetHiddenSidebarState()
-diff --git a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanelController.swift b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanelController.swift
-index d63b2324..d284ccdf 100644
---- a/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanelController.swift
-+++ b/Sources/AppBundle/ui/sidebar/WorkspaceSidebarPanelController.swift
-@@ -67,7 +67,7 @@ final class WorkspaceSidebarPanel: NSPanelHud {
-         isExcludedFromWindowsMenu = true
-         animationBehavior = .none
-         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
--        applyWinMuxLayer(.workspaceSidebar)
-+        applyWorkspaceSidebarLayer(stayOnTop: config.workspaceSidebar.stayOnTop)
-         contentView = hostingView
-         hostingView.frame = contentView?.bounds ?? .zero
-         hostingView.autoresizingMask = [.width, .height]
 diff --git a/Sources/AppBundleTests/command/AgentCommandTest.swift b/Sources/AppBundleTests/command/AgentCommandTest.swift
 index e0e3ca12..9bf97c61 100644
 --- a/Sources/AppBundleTests/command/AgentCommandTest.swift
@@ -1626,33 +1536,13 @@ index efc83956..95ee990c 100644
          let workspaceA = Workspace.get(byName: "a")
          workspaceA.rootTilingContainer.apply {
 diff --git a/Sources/AppBundleTests/config/ConfigTestConfigEdits.swift b/Sources/AppBundleTests/config/ConfigTestConfigEdits.swift
-index 369b9b6a..0b86c1a1 100644
+index 86ce43af..459fdc06 100644
 --- a/Sources/AppBundleTests/config/ConfigTestConfigEdits.swift
 +++ b/Sources/AppBundleTests/config/ConfigTestConfigEdits.swift
-@@ -156,4 +156,128 @@ extension ConfigTest {
-         XCTAssertFalse(updated.contains("move-windows-to-fallback"))
+@@ -176,4 +176,109 @@ extension ConfigTest {
+         XCTAssertTrue(updated.contains("[mode.main.binding]"))
      }
  
-+    func testUpdateSettingsScalarConfigReplacesWorkspaceSidebarStayOnTop() {
-+        let updated = updateSettingsScalarConfig(
-+            in: """
-+            [workspace-sidebar]
-+                enabled = true
-+                stay-on-top = true
-+
-+            [mode.main.binding]
-+                alt-h = 'focus left'
-+            """,
-+            section: "workspace-sidebar",
-+            key: "stay-on-top",
-+            renderedValue: "false",
-+        )
-+
-+        XCTAssertTrue(updated.contains("stay-on-top = false"))
-+        XCTAssertFalse(updated.contains("stay-on-top = true"))
-+        XCTAssertTrue(updated.contains("[mode.main.binding]"))
-+    }
-+
 +    func testPersistProjectMetadataCreatesOnlyAtExplicitMissingTarget() throws {
 +        let tempDir = FileManager.default.temporaryDirectory
 +            .appending(path: "WinMuxProjectPersistenceTests-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -1757,37 +1647,10 @@ index 369b9b6a..0b86c1a1 100644
 +        XCTAssertEqual(parsed.workspaceSidebar.projectLabels["project-safe"], raw)
 +    }
 +
++||||||| base
  }
-diff --git a/Sources/AppBundleTests/config/ConfigTestWorkspaceSidebarConfig.swift b/Sources/AppBundleTests/config/ConfigTestWorkspaceSidebarConfig.swift
-index e087eea2..5a173e5f 100644
---- a/Sources/AppBundleTests/config/ConfigTestWorkspaceSidebarConfig.swift
-+++ b/Sources/AppBundleTests/config/ConfigTestWorkspaceSidebarConfig.swift
-@@ -10,6 +10,7 @@ extension ConfigTest {
-             [workspace-sidebar]
-                 enabled = true
-                 enable-focus = true
-+                stay-on-top = false
-                 auto-hide = true
-                 always-expanded = true
-                 width = 280
-@@ -40,6 +41,7 @@ extension ConfigTest {
-             WorkspaceSidebarConfig(
-                 enabled: true,
-                 enableFocus: true,
-+                stayOnTop: false,
-                 autoHide: true,
-                 alwaysExpanded: true,
-                 collapsedWidth: 44,
-@@ -67,6 +69,7 @@ extension ConfigTest {
-         )
-         assertEquals(backwardCompatibleErrors, [])
-         XCTAssertFalse(backwardCompatible.workspaceSidebar.alwaysExpanded)
-+        XCTAssertTrue(backwardCompatible.workspaceSidebar.stayOnTop)
- 
-         let (solidChrome, solidChromeErrors) = parseConfig(
-             """
 diff --git a/Sources/AppBundleTests/testUtil.swift b/Sources/AppBundleTests/testUtil.swift
-index 7816864b..bad55a75 100644
+index 7860e985..030f04f9 100644
 --- a/Sources/AppBundleTests/testUtil.swift
 +++ b/Sources/AppBundleTests/testUtil.swift
 @@ -44,6 +44,10 @@ func setUpWorkspacesForTests() {
@@ -1801,7 +1664,7 @@ index 7816864b..bad55a75 100644
      resetWinMuxWorkspaceStateForTests()
      check(Workspace.get(byName: "setUpWorkspacesForTests").focusWorkspace())
      Workspace.reconcileWorkspaceState()
-@@ -92,7 +96,7 @@ extension WorkspaceCmdArgs {
+@@ -93,7 +97,7 @@ extension WorkspaceCmdArgs {
  }
  
  extension MoveNodeToWorkspaceCmdArgs {
@@ -1811,10 +1674,10 @@ index 7816864b..bad55a75 100644
          self.target = .initialized(target)
          self._wrapAround = wrapAround
 diff --git a/Sources/AppBundleTests/ui/WorkspaceNamingTest.swift b/Sources/AppBundleTests/ui/WorkspaceNamingTest.swift
-index 9264532c..d69b88df 100644
+index 9a75dc54..04bd76f0 100644
 --- a/Sources/AppBundleTests/ui/WorkspaceNamingTest.swift
 +++ b/Sources/AppBundleTests/ui/WorkspaceNamingTest.swift
-@@ -482,9 +482,13 @@ final class WorkspaceNamingTest: XCTestCase {
+@@ -517,9 +517,13 @@ final class WorkspaceNamingTest: XCTestCase {
          let first = createWorkspaceProject()
          let second = createWorkspaceProject()
  
@@ -1831,7 +1694,7 @@ index 9264532c..d69b88df 100644
      }
  
      func testProjectCreationAppendsAfterDeletedMiddleProject() throws {
-@@ -495,16 +499,30 @@ final class WorkspaceNamingTest: XCTestCase {
+@@ -530,16 +534,30 @@ final class WorkspaceNamingTest: XCTestCase {
          try deleteWorkspaceProject(second.id)
          let fourth = createWorkspaceProject()
  
@@ -1867,7 +1730,7 @@ index 9264532c..d69b88df 100644
      func testProjectNamesFollowStableInsertionOrder() throws {
          let first = createWorkspaceProject()
          let second = createWorkspaceProject()
-@@ -587,4 +605,14 @@ final class WorkspaceNamingTest: XCTestCase {
+@@ -622,4 +640,14 @@ final class WorkspaceNamingTest: XCTestCase {
          XCTAssertTrue(returnedWorkspace === defaultWorkspace)
      }
  
@@ -1882,31 +1745,8 @@ index 9264532c..d69b88df 100644
 +    }
 +
  }
-diff --git a/Sources/AppBundleTests/ui/WorkspaceSidebarDragTest.swift b/Sources/AppBundleTests/ui/WorkspaceSidebarDragTest.swift
-index 27303aef..1063d670 100644
---- a/Sources/AppBundleTests/ui/WorkspaceSidebarDragTest.swift
-+++ b/Sources/AppBundleTests/ui/WorkspaceSidebarDragTest.swift
-@@ -256,6 +256,18 @@ final class WorkspaceSidebarDragTest: XCTestCase {
-         }
-     }
- 
-+    func testWorkspaceSidebarCanRenderBelowDockWhileRemainingAboveNormalWindows() {
-+        let loweredLevel = workspaceSidebarPanelLevel(stayOnTop: false)
-+
-+        XCTAssertEqual(loweredLevel, .floating)
-+        XCTAssertGreaterThan(loweredLevel.rawValue, NSWindow.Level.normal.rawValue)
-+        XCTAssertLessThan(loweredLevel.rawValue, Int(CGWindowLevelForKey(.dockWindow)))
-+        XCTAssertEqual(
-+            workspaceSidebarPanelLevel(stayOnTop: true),
-+            WinMuxPanelLayer.workspaceSidebar.level,
-+        )
-+    }
-+
-     func testLeftMouseButtonPressedUsesBitmask() {
-         XCTAssertTrue(isLeftMouseButtonPressed(mask: 0b1))
-         XCTAssertTrue(isLeftMouseButtonPressed(mask: 0b11))
 diff --git a/Sources/Cli/_main.swift b/Sources/Cli/_main.swift
-index 181186e6..969fecf6 100644
+index 1eadfcf0..3de3bded 100644
 --- a/Sources/Cli/_main.swift
 +++ b/Sources/Cli/_main.swift
 @@ -10,6 +10,7 @@ let usage =
@@ -3059,7 +2899,7 @@ index d3e552dd..132b3db4 100644
  
  extension Int: WinMuxAny {}
 diff --git a/makefile b/makefile
-index f0d5830a..a1f11e97 100644
+index f0d5830a..495e99e9 100644
 --- a/makefile
 +++ b/makefile
 @@ -2,14 +2,21 @@ VERSION ?= $(shell tr -d '[:space:]' < VERSION)
@@ -3415,17 +3255,3 @@ index f0d5830a..a1f11e97 100644
  
  installed: install
  
-diff --git a/resources/default-config.toml b/resources/default-config.toml
-index ddf36338..47478d7e 100644
---- a/resources/default-config.toml
-+++ b/resources/default-config.toml
-@@ -39,6 +39,9 @@ on-mode-changed = []
- 
- [workspace-sidebar]
-     enabled = true
-+    # Keep the sidebar above system UI such as the Dock. Set false to keep it
-+    # above ordinary app windows while allowing the Dock to appear over it.
-+    stay-on-top = true
-     # Hide the compact rail until the pointer reaches the display's left edge.
-     auto-hide = false
-     # Keep the full sidebar open and reserve its width for tiled windows.
