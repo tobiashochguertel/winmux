@@ -3,8 +3,8 @@
 Catalog of open pull requests from [ZimengXiong/winmux](https://github.com/ZimengXiong/winmux/pulls)
 evaluated for integration into the fork via the `.patch` strategy.
 
-**Last updated:** 2026-11-16
-**Total open PRs:** 5
+**Last updated:** 2026-11-23
+**Total open PRs:** 4
 
 ## Legend
 
@@ -25,15 +25,14 @@ evaluated for integration into the fork via the `.patch` strategy.
 
 | PR | Title | Size | Files | Risk | .patch fit |
 |----|----|----|----|----|----|
-| [#31](https://github.com/ZimengXiong/winmux/pull/31) | Keep the sidebar hidden while a fullscreen Space is on screen | +37/-4 | [`Sources/AppBundle/layout/refresh.swift`](https://github.com/ZimengXiong/winmux/pull/31/files#diff-91dc7eee61d15c9fad4283d21f610ab329e6ecd33d1baded3f5a6859a3c41e6f) `+5/-2`<br>[`Sources/AppBundle/ui/core/FullscreenChromeSuppression.swift`](https://github.com/ZimengXiong/winmux/pull/31/files#diff-066141dab96f92cc28f271660231f4c6cc24f0098fc0a10f3950b22edba4824e) `+32/-2` | Low | Great |
+| [#50](https://github.com/ZimengXiong/winmux/pull/50) | Keep WinMux running when its menu bar icon is hidden | +5/-1 | [`Sources/AppBundle/ui/menubar/MenuBar.swift`](https://github.com/ZimengXiong/winmux/pull/50/files#diff-77c6063bac36df82260f29e245b490cceea2ebddb1265b49a59a871dca944e0f) `+4/-1`<br>[`Sources/AppBundle/ui/menubar/TrayMenuModel.swift`](https://github.com/ZimengXiong/winmux/pull/50/files#diff-f99322ac88b11acc51130869a1dc784d806f369af0cebb6d5edbe96a1e0fffc5) `+1/-0` | Low | Great |
+| [#48](https://github.com/ZimengXiong/winmux/pull/48) | Keep sidebar labels of persistent workspaces that don't exist yet | +13/-0 | [`Sources/AppBundle/tree/WorkspaceSidebarLabels.swift`](https://github.com/ZimengXiong/winmux/pull/48/files#diff-a51aa211a852803eec8a6abc83dc3e29e17b5b75607804c2088c1c7dda6170c1) `+3/-0`<br>[`Sources/AppBundleTests/tree/TreeNodeTest.swift`](https://github.com/ZimengXiong/winmux/pull/48/files#diff-042d71688faac1db9c86ff52b006630afbabf266a9049742abc2cd5db59382d0) `+10/-0` | Low | Great |
 
 ### Tier 3 — Medium risk (overlaps or touches conflict-prone files)
 
 | PR | Title | Size | Files | Risk | .patch fit |
 |----|----|----|----|----|----|
-| [#32](https://github.com/ZimengXiong/winmux/pull/32) | Don't move focus when a window that was never focused closes | +61/-0 | [`Sources/AppBundle/tree/FocusAfterWindowClosure.swift`](https://github.com/ZimengXiong/winmux/pull/32/files#diff-244f586f22f6496d5444864c088eee0a5e7f03acd2b3b9be8d9fc9ea1076bd82) `+17/-0`<br>[`Sources/AppBundle/tree/MacWindow.swift`](https://github.com/ZimengXiong/winmux/pull/32/files#diff-a0d1a6f9d6cddcdfdf71ee0cfb26cb22030355a0fd8442b636f062ba03b3c7c3) `+5/-0`<br>[`Sources/AppBundleTests/tree/WindowTabsTest.swift`](https://github.com/ZimengXiong/winmux/pull/32/files#diff-0e8a0e6bbe637fcc9f0dd5889224fc5778be3866b8ee33bf63b041a4df6d52b3) `+39/-0` | Medium | Caution |
-| [#29](https://github.com/ZimengXiong/winmux/pull/29) | Fix idle relayouts rewriting every tiled window's AX frame | +60/-8 | [`Sources/AppBundle/layout/layoutRecursive.swift`](https://github.com/ZimengXiong/winmux/pull/29/files#diff-00b7c26c9dbd7538440eb444498558de09dda745a84f19f6ba7bb2e9b35086b1) `+18/-4`<br>[`Sources/AppBundleTests/ui/LayoutFrameWriteBenchmarkTest.swift`](https://github.com/ZimengXiong/winmux/pull/29/files#diff-7e369764c54bf244b574525baeceafb54858be4eb5052617cc55e32e5f311713) `+42/-4` | Medium | Caution |
-| [#30](https://github.com/ZimengXiong/winmux/pull/30) | Keep the wake reassertion alive through coalescing and pre-emption | +68/-2 | [`Sources/AppBundle/layout/refresh.swift`](https://github.com/ZimengXiong/winmux/pull/30/files#diff-91dc7eee61d15c9fad4283d21f610ab329e6ecd33d1baded3f5a6859a3c41e6f) `+17/-1`<br>[`Sources/AppBundleTests/model/RefreshSessionEventReassertionTest.swift`](https://github.com/ZimengXiong/winmux/pull/30/files#diff-b26b0f7a81420f2db34619e4036013d68e6c33a5a81521e685933f45f9b5380d) `+51/-1` | Medium | Caution |
+| [#49](https://github.com/ZimengXiong/winmux/pull/49) | Remember workspace monitors after explicit moves | +241/-13 | [`Sources/AppBundle/command/impl/MoveWorkspaceToMonitorCommand.swift`](https://github.com/ZimengXiong/winmux/pull/49/files#diff-d8499f8206af779df7f955f483b7ea73793e6a6efd2fbdd35a2e1e16bc686789) `+1/-1`<br>[`Sources/AppBundle/command/impl/SummonWorkspaceCommand.swift`](https://github.com/ZimengXiong/winmux/pull/49/files#diff-c671ef4ae91d9224204e3e469127dacb078b7709b11ce89477645c9adcf372df) `+1/-1`<br>[`Sources/AppBundle/tree/WinMuxWorkspaceState.swift`](https://github.com/ZimengXiong/winmux/pull/49/files#diff-06ac53fde09ee1ac5b2920a3cb32751eaa4beeddeefd51cc8bcfd362da179816) `+4/-1`<br>[`Sources/AppBundle/tree/WorkspaceMonitorAssignment.swift`](https://github.com/ZimengXiong/winmux/pull/49/files#diff-0251da198faf0627ee698b6fa35460ac61304eedee9a8303f66e6c6c33545e02) `+10/-9`<br>[`Sources/AppBundle/ui/sidebar/WorkspaceSidebarActions.swift`](https://github.com/ZimengXiong/winmux/pull/49/files#diff-dbd85a34ebce40b9d0a71464236e5e9ed8101cbbbadde205625055a2eb056b69) `+3/-1`<br>[`Sources/AppBundleTests/ui/WorkspaceMonitorPreferenceTest.swift`](https://github.com/ZimengXiong/winmux/pull/49/files#diff-ff73b8d2f2d176cf932c78f9f0989d7e5ca7c2b74596e4a8c6780d660f3e85d1) `+150/-0`<br>[`Sources/AppBundleTests/ui/WorkspaceNamingTestMonitorAssignment.swift`](https://github.com/ZimengXiong/winmux/pull/49/files#diff-991022d60c70969b909a5372e87ec42d672b4434f5260d80e5dabf5e7a9bfe14) `+72/-0` | Medium | Caution — overlaps existing patch |
 
 ## File overlap matrix
 
@@ -41,4 +40,5 @@ Files that appear in multiple PRs — integrating one may complicate integrating
 
 | File | PRs |
 |------|-----|
-| `Sources/AppBundle/layout/refresh.swift` | [#30](https://github.com/ZimengXiong/winmux/pull/30), [#31](https://github.com/ZimengXiong/winmux/pull/31) |
+| `Sources/AppBundle/tree/WinMuxWorkspaceState.swift` **(patched)** | [#24](https://github.com/ZimengXiong/winmux/pull/24), [#49](https://github.com/ZimengXiong/winmux/pull/49) |
+| `Sources/AppBundle/ui/sidebar/WorkspaceSidebarActions.swift` **(patched)** | [#24](https://github.com/ZimengXiong/winmux/pull/24), [#49](https://github.com/ZimengXiong/winmux/pull/49) |
